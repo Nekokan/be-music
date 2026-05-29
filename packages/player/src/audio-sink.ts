@@ -80,6 +80,7 @@ interface NodeWebAudioContextConstructor {
 
 const WEBAUDIO_HIGH_WATER_MS = 64;
 const WEBAUDIO_LOW_WATER_MS = 32;
+const DEBUG_SEA_AUDIO_ENV = 'BE_MUSIC_DEBUG_SEA_AUDIO';
 
 export function createBrowserAudioSink(context: WebAudioContextLike, options: AudioSinkCreateOptions): AudioSink {
   return createWebAudioSink('browser', context, options);
@@ -98,10 +99,12 @@ export async function createNodeAudioSink(options: AudioSinkCreateOptions): Prom
     context = new AudioContext({
       sampleRate: options.sampleRate,
     });
-  } catch {
+  } catch (error) {
+    debugSeaAudio('AudioContext(sampleRate) failed', error);
     try {
       context = new AudioContext();
-    } catch {
+    } catch (fallbackError) {
+      debugSeaAudio('AudioContext() failed', fallbackError);
       return undefined;
     }
   }
@@ -275,6 +278,7 @@ async function loadNodeWebAudioContextConstructor(
     throwIfAborted(signal);
     const candidate = imported.AudioContext ?? imported.default?.AudioContext ?? imported.default;
     if (typeof candidate !== 'function') {
+      debugSeaAudio('node-web-audio-api did not export AudioContext');
       return undefined;
     }
     return candidate as NodeWebAudioContextConstructor;
@@ -282,6 +286,7 @@ async function loadNodeWebAudioContextConstructor(
     if (isAbortError(error)) {
       throw error;
     }
+    debugSeaAudio('loading node-web-audio-api failed', error);
     return undefined;
   }
 }
@@ -298,9 +303,18 @@ async function loadSeaNodeWebAudioModule(): Promise<NodeWebAudioModule | undefin
   try {
     const { loadSeaNodeWebAudioApi } = await import('./node-web-audio-sea.ts');
     return loadSeaNodeWebAudioApi() as NodeWebAudioModule | undefined;
-  } catch {
+  } catch (error) {
+    debugSeaAudio('loading SEA node-web-audio-api module failed', error);
     return undefined;
   }
+}
+
+function debugSeaAudio(message: string, error?: unknown): void {
+  if (process.env[DEBUG_SEA_AUDIO_ENV] !== '1') {
+    return;
+  }
+  const detail = error instanceof Error ? `: ${error.stack ?? error.message}` : '';
+  process.stderr.write(`[sea-audio] ${message}${detail}\n`);
 }
 
 async function closeContextSafely(context: WebAudioContextLike): Promise<void> {

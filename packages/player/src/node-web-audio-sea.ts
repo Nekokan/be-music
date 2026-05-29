@@ -7,6 +7,7 @@ import { getAsset, getRawAsset } from 'node:sea';
 const SEA_NODE_WEB_AUDIO_ASSET_PREFIX = '@be-music/player/sea-node-web-audio-api/';
 const SEA_NODE_WEB_AUDIO_MANIFEST_ASSET = `${SEA_NODE_WEB_AUDIO_ASSET_PREFIX}manifest.json`;
 const SEA_NODE_WEB_AUDIO_PACKAGE_DIR_ENV = 'BE_MUSIC_SEA_NODE_WEB_AUDIO_API_DIR';
+const DEBUG_SEA_AUDIO_ENV = 'BE_MUSIC_DEBUG_SEA_AUDIO';
 
 interface SeaNodeWebAudioFileAsset {
   assetKey: string;
@@ -23,14 +24,18 @@ export function loadSeaNodeWebAudioApi(): unknown | undefined {
   let packageDir = process.env[SEA_NODE_WEB_AUDIO_PACKAGE_DIR_ENV];
   try {
     packageDir ??= materializeSeaNodeWebAudioPackage();
-  } catch {
+  } catch (error) {
+    debugSeaAudio('materializing node-web-audio-api failed', error);
     return undefined;
   }
 
   const packageEntry = join(packageDir, 'index.cjs');
   try {
-    return createRequire(packageEntry)(packageEntry);
-  } catch {
+    const loaded = createRequire(packageEntry)(packageEntry);
+    debugSeaAudio(`loaded node-web-audio-api from ${packageEntry}`);
+    return loaded;
+  } catch (error) {
+    debugSeaAudio(`requiring node-web-audio-api from ${packageEntry} failed`, error);
     return undefined;
   }
 }
@@ -72,4 +77,12 @@ function resolvePackageFilePath(packageDir: string, relativePath: string): strin
     throw new Error(`Invalid SEA node-web-audio-api asset path: ${relativePath}`);
   }
   return join(packageDir, ...parts);
+}
+
+function debugSeaAudio(message: string, error?: unknown): void {
+  if (process.env[DEBUG_SEA_AUDIO_ENV] !== '1') {
+    return;
+  }
+  const detail = error instanceof Error ? `: ${error.stack ?? error.message}` : '';
+  process.stderr.write(`[sea-audio] ${message}${detail}\n`);
 }

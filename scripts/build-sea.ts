@@ -41,6 +41,17 @@ interface SeaNodeWebAudioAssetConfig {
   assetPrefix: string;
 }
 
+interface SeaAssetFile {
+  packagePath: string;
+  sourcePath: string;
+}
+
+interface PackageJson {
+  dependencies?: Record<string, string>;
+  name?: string;
+  version?: string;
+}
+
 const TARGET_NAMES = ['player', 'audio-renderer'] as const;
 type SeaTargetName = (typeof TARGET_NAMES)[number];
 
@@ -338,19 +349,24 @@ async function buildSeaNodeWebAudioAssets(
   const packageEntry = requireFromScript.resolve('node-web-audio-api', { paths: [config.packageDir] });
   const packageDir = dirname(packageEntry);
   const nativeFileName = getNodeWebAudioNativeFileName();
-  const fileNames = [
-    'index.cjs',
-    'load-native.cjs',
-    ...(await collectPackageFileNames(resolve(packageDir, 'js'))).map((fileName) => `js/${fileName}`),
-    nativeFileName,
+  const assetFiles = [
+    { packagePath: 'package.json', sourcePath: resolve(packageDir, 'package.json') },
+    { packagePath: 'index.cjs', sourcePath: resolve(packageDir, 'index.cjs') },
+    { packagePath: 'load-native.cjs', sourcePath: resolve(packageDir, 'load-native.cjs') },
+    ...(await collectPackageFileNames(resolve(packageDir, 'js'))).map((fileName) => ({
+      packagePath: `js/${fileName}`,
+      sourcePath: resolve(packageDir, 'js', fileName),
+    })),
+    { packagePath: nativeFileName, sourcePath: resolve(packageDir, nativeFileName) },
+    ...(await collectPackageDependencyFiles(packageDir)),
   ];
 
   const assetPrefix = config.nodeWebAudioAssets.assetPrefix;
   const manifestPath = resolve(seaDir, 'node-web-audio-api-manifest.json');
   const manifest = {
-    files: fileNames.map((fileName) => ({
-      path: fileName,
-      assetKey: `${assetPrefix}files/${fileName}`,
+    files: assetFiles.map((file) => ({
+      path: file.packagePath,
+      assetKey: `${assetPrefix}files/${file.packagePath}`,
     })),
   };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
@@ -358,10 +374,99 @@ async function buildSeaNodeWebAudioAssets(
   const assets: Record<string, string> = {
     [`${assetPrefix}manifest.json`]: manifestPath,
   };
-  for (const file of manifest.files) {
-    assets[file.assetKey] = resolve(packageDir, file.path);
+  for (const file of assetFiles) {
+    assets[`${assetPrefix}files/${file.packagePath}`] = file.sourcePath;
   }
   return assets;
+}
+
+async function collectPackageDependencyFiles(
+  packageDir: string,
+  destinationNodeModulesDir = 'node_modules',
+  seenPackageJsonPaths = new Set<string>(),
+): Promise<SeaAssetFile[]> {
+  const packageJsonPath = resolve(packageDir, 'package.json');
+  const packageJson = await readPackageJson(packageJsonPath);
+  const dependencies = Object.keys(packageJson.dependencies ?? {}).sort();
+  const files: SeaAssetFile[] = [];
+
+  for (const dependencyName of dependencies) {
+    const dependencyPackageJsonPath = await resolveDependencyPackageJsonPath(dependencyName, packageDir);
+    if (seenPackageJsonPaths.has(dependencyPackageJsonPath)) {
+      continue;
+    }
+    seenPackageJsonPaths.add(dependencyPackageJsonPath);
+
+    const dependencyPackageDir = dirname(dependencyPackageJsonPath);
+    const destinationPackageDir = `${destinationNodeModulesDir}/${dependencyName}`;
+    files.push(...(await collectPackageFiles(dependencyPackageDir, destinationPackageDir)));
+    files.push(
+      ...(await collectPackageDependencyFiles(
+        dependencyPackageDir,
+        `${destinationPackageDir}/node_modules`,
+        seenPackageJsonPaths,
+      )),
+    );
+  }
+
+  return files;
+}
+
+async function resolveDependencyPackageJsonPath(dependencyName: string, packageDir: string): Promise<string> {
+  try {
+    return requireFromScript.resolve(`${dependencyName}/package.json`, {
+      paths: [packageDir],
+    });
+  } catch {
+    const entryPath = requireFromScript.resolve(dependencyName, { paths: [packageDir] });
+    return await findPackageJsonForEntry(dependencyName, entryPath);
+  }
+}
+
+async function findPackageJsonForEntry(packageName: string, entryPath: string): Promise<string> {
+  let dir = dirname(entryPath);
+  while (true) {
+    const packageJsonPath = resolve(dir, 'package.json');
+    try {
+      const packageJson = await readPackageJson(packageJsonPath);
+      if (packageJson.name === packageName) {
+        return packageJsonPath;
+      }
+    } catch {
+      // Keep walking upward until the package root is found.
+    }
+
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error(`Unable to locate package.json for dependency: ${packageName}`);
+    }
+    dir = parent;
+  }
+}
+
+async function collectPackageFiles(packageDir: string, destinationPackageDir: string): Promise<SeaAssetFile[]> {
+  return (await collectPackageFileNames(packageDir)).filter(isRuntimePackageFile).map((fileName) => ({
+    packagePath: `${destinationPackageDir}/${fileName}`,
+    sourcePath: resolve(packageDir, fileName),
+  }));
+}
+
+function isRuntimePackageFile(fileName: string): boolean {
+  const parts = fileName.split('/');
+  if (parts.includes('node_modules') || parts.some((part) => part.startsWith('.'))) {
+    return false;
+  }
+  if (fileName === 'package.json') {
+    return true;
+  }
+  if (fileName.endsWith('.map') || fileName.endsWith('.d.ts')) {
+    return false;
+  }
+  return /\.(?:cjs|mjs|js|json|node|wasm)$/.test(fileName);
+}
+
+async function readPackageJson(pathValue: string): Promise<PackageJson> {
+  return JSON.parse(await readFile(pathValue, 'utf8')) as PackageJson;
 }
 
 async function collectPackageFileNames(dir: string): Promise<string[]> {
