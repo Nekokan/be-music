@@ -9,6 +9,13 @@ import type { PlayerLoadProgress, PlayerSummary } from '@be-music/player/core/en
 import { PlayerInterruptedError } from '@be-music/player/core/engine';
 import { createNodeInputRuntime, type NodeInputRuntime } from './node-input-runtime.ts';
 import { createNodeUiRuntime, type NodeUiRuntime } from './node-ui-runtime.ts';
+import {
+  isSourceModuleUrl,
+  resolveNodeWorkerUrl,
+  resolveSeaNodeWebAudioPackageDir,
+  SEA_NODE_WEB_AUDIO_PACKAGE_DIR_ENV,
+  SEA_WORKER_ASSETS,
+} from './sea-worker-assets.ts';
 import type {
   NodeGameplayWorkerInboundMessage,
   NodeGameplayWorkerInitData,
@@ -291,14 +298,16 @@ function createWorkerInitData(options: NodeGameplayRuntimeOptions): NodeGameplay
 }
 
 function resolveNodeGameplayWorkerUrl(): URL {
-  return new URL(
-    import.meta.url.endsWith('.ts') ? './node-gameplay-worker.ts' : './node-gameplay-worker.js',
+  return resolveNodeWorkerUrl(
+    './node-gameplay-worker.ts',
+    './node-gameplay-worker.js',
     import.meta.url,
+    SEA_WORKER_ASSETS.gameplay,
   );
 }
 
 function resolveNodeGameplayWorkerExecArgv(): string[] {
-  if (!import.meta.url.endsWith('.ts')) {
+  if (!isSourceModuleUrl(import.meta.url)) {
     return process.execArgv;
   }
   if (process.execArgv.includes('--conditions=source')) {
@@ -308,12 +317,19 @@ function resolveNodeGameplayWorkerExecArgv(): string[] {
 }
 
 function resolveNodeGameplayWorkerEnv(): NodeJS.ProcessEnv {
-  if (!import.meta.url.endsWith('.ts')) {
-    return process.env;
+  const seaNodeWebAudioPackageDir = resolveSeaNodeWebAudioPackageDir();
+  if (!isSourceModuleUrl(import.meta.url)) {
+    return seaNodeWebAudioPackageDir
+      ? {
+          ...process.env,
+          [SEA_NODE_WEB_AUDIO_PACKAGE_DIR_ENV]: seaNodeWebAudioPackageDir,
+        }
+      : process.env;
   }
 
   return {
     ...process.env,
+    ...(seaNodeWebAudioPackageDir ? { [SEA_NODE_WEB_AUDIO_PACKAGE_DIR_ENV]: seaNodeWebAudioPackageDir } : {}),
     TSX_TSCONFIG_PATH:
       process.env.TSX_TSCONFIG_PATH ?? fileURLToPath(new URL('../../../../tsconfig.typecheck.json', import.meta.url)),
   };

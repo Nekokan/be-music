@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { createAbortError, isAbortError, throwIfAborted } from '@be-music/utils/core';
+import { isSourceModuleUrl, resolveNodeWorkerUrl, SEA_WORKER_ASSETS } from './node/sea-worker-assets.ts';
 
 const SUPPORTED_VIDEO_CODECS = new Set(['mpeg1video', 'h264', 'mjpeg']);
 // Keep chunks small so ff_decode_multi never allocates too many full-size frames at once.
@@ -636,11 +637,16 @@ async function createLibAvInstance(): Promise<LibAvInstance> {
 }
 
 function resolveBgaVideoWorkerUrl(): URL {
-  return new URL(import.meta.url.endsWith('.ts') ? './bga-video-worker.ts' : './bga-video-worker.js', import.meta.url);
+  return resolveNodeWorkerUrl(
+    './bga-video-worker.ts',
+    './bga-video-worker.js',
+    import.meta.url,
+    SEA_WORKER_ASSETS.bgaVideo,
+  );
 }
 
 function resolveBgaVideoWorkerExecArgv(): string[] {
-  if (!import.meta.url.endsWith('.ts')) {
+  if (!isSourceModuleUrl(import.meta.url)) {
     return process.execArgv;
   }
   if (process.execArgv.includes('--conditions=source')) {
@@ -650,7 +656,7 @@ function resolveBgaVideoWorkerExecArgv(): string[] {
 }
 
 function resolveBgaVideoWorkerEnv(): NodeJS.ProcessEnv {
-  if (!import.meta.url.endsWith('.ts')) {
+  if (!isSourceModuleUrl(import.meta.url)) {
     return process.env;
   }
 

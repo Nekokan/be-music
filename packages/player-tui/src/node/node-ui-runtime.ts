@@ -16,6 +16,7 @@ import type {
   NodeUiWorkerInitData,
   NodeUiWorkerOutboundMessage,
 } from './node-ui-worker-protocol.ts';
+import { isSourceModuleUrl, resolveNodeWorkerUrl, SEA_WORKER_ASSETS } from './sea-worker-assets.ts';
 
 export interface NodeUiRuntimeOptions {
   json: NodeUiWorkerInitData['json'];
@@ -310,11 +311,11 @@ function shouldUseAlternateScreen(platform: NodeJS.Platform): boolean {
 }
 
 function resolveNodeUiWorkerUrl(): URL {
-  return new URL(import.meta.url.endsWith('.ts') ? './node-ui-worker.ts' : './node-ui-worker.js', import.meta.url);
+  return resolveNodeWorkerUrl('./node-ui-worker.ts', './node-ui-worker.js', import.meta.url, SEA_WORKER_ASSETS.ui);
 }
 
 function resolveNodeUiWorkerExecArgv(): string[] {
-  if (!import.meta.url.endsWith('.ts')) {
+  if (!isSourceModuleUrl(import.meta.url)) {
     return process.execArgv;
   }
   if (process.execArgv.includes('--conditions=source')) {
@@ -324,7 +325,7 @@ function resolveNodeUiWorkerExecArgv(): string[] {
 }
 
 function resolveNodeUiWorkerEnv(): NodeJS.ProcessEnv {
-  if (!import.meta.url.endsWith('.ts')) {
+  if (!isSourceModuleUrl(import.meta.url)) {
     return process.env;
   }
 
