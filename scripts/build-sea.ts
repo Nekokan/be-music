@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
-import { builtinModules } from 'node:module';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { builtinModules, createRequire } from 'node:module';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'vite';
@@ -27,6 +27,18 @@ interface SeaTargetConfig {
   optionalExternalModules?: string[];
   bundleBanner?: string;
   aliases?: Record<string, string>;
+  workerAssets?: SeaWorkerAssetConfig[];
+  nodeWebAudioAssets?: SeaNodeWebAudioAssetConfig;
+}
+
+interface SeaWorkerAssetConfig {
+  assetKey: string;
+  entry: string;
+  fileName: string;
+}
+
+interface SeaNodeWebAudioAssetConfig {
+  assetPrefix: string;
 }
 
 const TARGET_NAMES = ['player', 'audio-renderer'] as const;
@@ -34,6 +46,7 @@ type SeaTargetName = (typeof TARGET_NAMES)[number];
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repositoryDir = resolve(scriptDir, '..');
+const requireFromScript = createRequire(import.meta.url);
 
 const SEA_TARGETS: Record<SeaTargetName, SeaTargetConfig> = {
   player: {
@@ -67,6 +80,26 @@ const SEA_TARGETS: Record<SeaTargetName, SeaTargetConfig> = {
       '@be-music/utils/pcm': resolve(repositoryDir, 'packages/utils/src/pcm.ts'),
       '@be-music/utils/workerize': resolve(repositoryDir, 'packages/utils/src/workerize.ts'),
       '@be-music/utils': resolve(repositoryDir, 'packages/utils/src/index.ts'),
+    },
+    workerAssets: [
+      {
+        assetKey: '@be-music/player-tui/sea-worker/node-gameplay-worker.cjs',
+        entry: resolve(repositoryDir, 'packages/player-tui/src/node/node-gameplay-worker.ts'),
+        fileName: 'node-gameplay-worker.cjs',
+      },
+      {
+        assetKey: '@be-music/player-tui/sea-worker/node-ui-worker.cjs',
+        entry: resolve(repositoryDir, 'packages/player-tui/src/node/node-ui-worker.ts'),
+        fileName: 'node-ui-worker.cjs',
+      },
+      {
+        assetKey: '@be-music/player-tui/sea-worker/bga-video-worker.cjs',
+        entry: resolve(repositoryDir, 'packages/player-tui/src/bga-video-worker.ts'),
+        fileName: 'bga-video-worker.cjs',
+      },
+    ],
+    nodeWebAudioAssets: {
+      assetPrefix: '@be-music/player/sea-node-web-audio-api/',
     },
   },
   'audio-renderer': {
@@ -210,7 +243,12 @@ function createWorkspaceAliasPlugin(aliases?: Record<string, string>) {
   // bypasses the rest of the resolution pipeline once a plugin returns a string from `resolveId`.
   return {
     name: 'be-music-sea-workspace-alias',
-    async resolveId(this: { resolve: (id: string, importer?: string, options?: { skipSelf?: boolean }) => Promise<{ id: string } | null> }, source: string): Promise<string | null> {
+    async resolveId(
+      this: {
+        resolve: (id: string, importer?: string, options?: { skipSelf?: boolean }) => Promise<{ id: string } | null>;
+      },
+      source: string,
+    ): Promise<string | null> {
       for (const [find, replacement] of entries) {
         let target: string | undefined;
         if (source === find) {
@@ -230,41 +268,157 @@ function createWorkspaceAliasPlugin(aliases?: Record<string, string>) {
   };
 }
 
-async function buildSeaBundle(config: SeaTargetConfig, seaDir: string): Promise<void> {
+async function buildSeaBundle(
+  config: SeaTargetConfig,
+  seaDir: string,
+  entry: string,
+  fileName: string,
+  emptyOutDir: boolean,
+): Promise<void> {
   const workspaceAliasPlugin = createWorkspaceAliasPlugin(config.aliases);
   await build({
     configFile: false,
-    resolve: config.aliases
-      ? {
-          alias: config.aliases,
-        }
-      : undefined,
+    resolve: {
+      alias: config.aliases,
+      conditions: ['source', 'node'],
+      mainFields: ['source', 'module', 'main'],
+    },
     build: {
       target: 'node25',
       outDir: seaDir,
-      emptyOutDir: true,
+      emptyOutDir,
       codeSplitting: false,
       minify: false,
       sourcemap: false,
       lib: {
-        entry: resolve(config.packageDir, 'src/cli.ts'),
+        entry,
         formats: ['cjs'],
-        fileName: () => 'sea-entry.cjs',
+        fileName: () => fileName,
       },
       rollupOptions: {
         plugins: workspaceAliasPlugin ? [workspaceAliasPlugin] : undefined,
         external: buildExternalModules(config.optionalExternalModules ?? []),
         output: {
           banner: config.bundleBanner,
-          entryFileNames: 'sea-entry.cjs',
+          entryFileNames: fileName,
         },
       },
     },
   });
 }
 
+async function buildSeaEntryBundle(config: SeaTargetConfig, seaDir: string): Promise<void> {
+  await buildSeaBundle(config, seaDir, resolve(config.packageDir, 'src/cli.ts'), 'sea-entry.cjs', true);
+}
+
+async function buildSeaWorkerAssets(
+  config: SeaTargetConfig,
+  seaDir: string,
+): Promise<Record<string, string> | undefined> {
+  if (!config.workerAssets || config.workerAssets.length === 0) {
+    return undefined;
+  }
+
+  const assets: Record<string, string> = {};
+  for (const worker of config.workerAssets) {
+    await buildSeaBundle(config, seaDir, worker.entry, worker.fileName, false);
+    assets[worker.assetKey] = resolve(seaDir, worker.fileName);
+  }
+  return assets;
+}
+
+async function buildSeaNodeWebAudioAssets(
+  config: SeaTargetConfig,
+  seaDir: string,
+): Promise<Record<string, string> | undefined> {
+  if (!config.nodeWebAudioAssets) {
+    return undefined;
+  }
+
+  const packageEntry = requireFromScript.resolve('node-web-audio-api', { paths: [config.packageDir] });
+  const packageDir = dirname(packageEntry);
+  const nativeFileName = getNodeWebAudioNativeFileName();
+  const fileNames = [
+    'index.cjs',
+    'load-native.cjs',
+    ...(await collectPackageFileNames(resolve(packageDir, 'js'))).map((fileName) => `js/${fileName}`),
+    nativeFileName,
+  ];
+
+  const assetPrefix = config.nodeWebAudioAssets.assetPrefix;
+  const manifestPath = resolve(seaDir, 'node-web-audio-api-manifest.json');
+  const manifest = {
+    files: fileNames.map((fileName) => ({
+      path: fileName,
+      assetKey: `${assetPrefix}files/${fileName}`,
+    })),
+  };
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+
+  const assets: Record<string, string> = {
+    [`${assetPrefix}manifest.json`]: manifestPath,
+  };
+  for (const file of manifest.files) {
+    assets[file.assetKey] = resolve(packageDir, file.path);
+  }
+  return assets;
+}
+
+async function collectPackageFileNames(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const fileNames: string[] = [];
+
+  for (const entry of entries) {
+    const entryPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      for (const childFileName of await collectPackageFileNames(entryPath)) {
+        fileNames.push(`${entry.name}/${childFileName}`);
+      }
+      continue;
+    }
+    if (entry.isFile()) {
+      fileNames.push(relative(dir, entryPath).split('\\').join('/'));
+    }
+  }
+
+  return fileNames.sort();
+}
+
+function getNodeWebAudioNativeFileName(): string {
+  const platform = process.platform;
+  const arch = process.arch;
+  if (platform === 'darwin') {
+    if (arch === 'x64' || arch === 'arm64') {
+      return `node-web-audio-api.darwin-${arch}.node`;
+    }
+  }
+  if (platform === 'linux') {
+    if (arch === 'x64') {
+      return 'node-web-audio-api.linux-x64-gnu.node';
+    }
+    if (arch === 'arm64') {
+      return 'node-web-audio-api.linux-arm64-gnu.node';
+    }
+    if (arch === 'arm') {
+      return 'node-web-audio-api.linux-arm-gnueabihf.node';
+    }
+  }
+  if (platform === 'win32') {
+    if (arch === 'x64' || arch === 'arm64') {
+      return `node-web-audio-api.win32-${arch}-msvc.node`;
+    }
+  }
+  throw new Error(`node-web-audio-api does not provide a bundled native binary for ${platform}-${arch}`);
+}
+
+const LOCAL_CHUNK_REQUIRE_PATTERN = /require\((['"])(\.\/[^'"]+)\1\)/g;
+
+function findLocalChunkRequireIds(code: string): string[] {
+  return [...code.matchAll(LOCAL_CHUNK_REQUIRE_PATTERN)].map((match) => match[2]).filter((id) => id !== undefined);
+}
+
 function replaceLocalChunkRequires(code: string, localChunkIds: Set<string>): string {
-  return code.replace(/require\((['"])(\.\/[^'"]+)\1\)/g, (match, _quote, id) =>
+  return code.replace(LOCAL_CHUNK_REQUIRE_PATTERN, (match, _quote, id) =>
     localChunkIds.has(id) ? `__sea_require(${JSON.stringify(id)})` : match,
   );
 }
@@ -276,10 +430,38 @@ function indentBlock(code: string): string {
     .join('\n');
 }
 
-async function inlineSeaRelativeChunks(seaDir: string): Promise<void> {
-  const entryFileName = 'sea-entry.cjs';
+async function collectLocalChunkFileNames(
+  seaDir: string,
+  entryFileName: string,
+  entryFileNames: Set<string>,
+): Promise<string[]> {
   const seaFiles = await readdir(seaDir);
-  const localChunkFileNames = seaFiles.filter((fileName) => fileName.endsWith('.cjs') && fileName !== entryFileName);
+  const chunkFileNames = new Set(
+    seaFiles.filter((fileName) => fileName.endsWith('.cjs') && !entryFileNames.has(fileName)),
+  );
+  const collected = new Set<string>();
+
+  const visitRequires = async (fileName: string): Promise<void> => {
+    const code = await readFile(resolve(seaDir, fileName), 'utf8');
+    for (const id of findLocalChunkRequireIds(code)) {
+      const requiredFileName = id.slice('./'.length);
+      if (!chunkFileNames.has(requiredFileName) || collected.has(requiredFileName)) {
+        continue;
+      }
+      collected.add(requiredFileName);
+      await visitRequires(requiredFileName);
+    }
+  };
+
+  await visitRequires(entryFileName);
+  return [...collected];
+}
+
+async function inlineSeaRelativeChunksForEntry(
+  seaDir: string,
+  entryFileName: string,
+  localChunkFileNames: string[],
+): Promise<void> {
   if (localChunkFileNames.length === 0) {
     return;
   }
@@ -324,7 +506,21 @@ async function inlineSeaRelativeChunks(seaDir: string): Promise<void> {
   ].join('\n');
 
   await writeFile(entryPath, `${inlinedRuntime}${entryCode}`, 'utf8');
-  await Promise.all(localChunkFileNames.map((fileName) => unlink(resolve(seaDir, fileName))));
+}
+
+async function inlineSeaRelativeChunks(seaDir: string, entryFileNames: readonly string[]): Promise<void> {
+  const entryFileNameSet = new Set(entryFileNames);
+  const removableChunkFileNames = new Set<string>();
+
+  for (const entryFileName of entryFileNames) {
+    const localChunkFileNames = await collectLocalChunkFileNames(seaDir, entryFileName, entryFileNameSet);
+    for (const fileName of localChunkFileNames) {
+      removableChunkFileNames.add(fileName);
+    }
+    await inlineSeaRelativeChunksForEntry(seaDir, entryFileName, localChunkFileNames);
+  }
+
+  await Promise.all([...removableChunkFileNames].map((fileName) => unlink(resolve(seaDir, fileName))));
 }
 
 async function supportsNodeFlag(nodeBinaryPath: string, cwd: string, flag: string): Promise<boolean> {
@@ -383,8 +579,17 @@ async function main(): Promise<void> {
   await mkdir(seaDir, { recursive: true });
 
   process.stdout.write('Building SEA bundle...\n');
-  await buildSeaBundle(targetConfig, seaDir);
-  await inlineSeaRelativeChunks(seaDir);
+  await buildSeaEntryBundle(targetConfig, seaDir);
+  const workerAssets = await buildSeaWorkerAssets(targetConfig, seaDir);
+  const nodeWebAudioAssets = await buildSeaNodeWebAudioAssets(targetConfig, seaDir);
+  const assets = {
+    ...(workerAssets ?? {}),
+    ...(nodeWebAudioAssets ?? {}),
+  };
+  await inlineSeaRelativeChunks(seaDir, [
+    'sea-entry.cjs',
+    ...(targetConfig.workerAssets?.map((asset) => asset.fileName) ?? []),
+  ]);
 
   const seaConfig = {
     main: bundlePath,
@@ -393,6 +598,7 @@ async function main(): Promise<void> {
     executable: nodeBinaryPath,
     disableExperimentalSEAWarning: true,
     useCodeCache: true,
+    ...(Object.keys(assets).length > 0 ? { assets } : {}),
   };
   await writeFile(configPath, `${JSON.stringify(seaConfig, null, 2)}\n`, 'utf8');
 

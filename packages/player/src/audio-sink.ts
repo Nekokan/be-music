@@ -271,7 +271,7 @@ async function loadNodeWebAudioContextConstructor(
 ): Promise<NodeWebAudioContextConstructor | undefined> {
   try {
     throwIfAborted(signal);
-    const imported = (await import('node-web-audio-api')) as NodeWebAudioModule;
+    const imported = await loadNodeWebAudioModule();
     throwIfAborted(signal);
     const candidate = imported.AudioContext ?? imported.default?.AudioContext ?? imported.default;
     if (typeof candidate !== 'function') {
@@ -282,6 +282,23 @@ async function loadNodeWebAudioContextConstructor(
     if (isAbortError(error)) {
       throw error;
     }
+    return undefined;
+  }
+}
+
+async function loadNodeWebAudioModule(): Promise<NodeWebAudioModule> {
+  const seaModule = await loadSeaNodeWebAudioModule();
+  if (seaModule) {
+    return seaModule;
+  }
+  return (await import('node-web-audio-api')) as NodeWebAudioModule;
+}
+
+async function loadSeaNodeWebAudioModule(): Promise<NodeWebAudioModule | undefined> {
+  try {
+    const { loadSeaNodeWebAudioApi } = await import('./node-web-audio-sea.ts');
+    return loadSeaNodeWebAudioApi() as NodeWebAudioModule | undefined;
+  } catch {
     return undefined;
   }
 }
