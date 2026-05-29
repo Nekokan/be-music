@@ -144,6 +144,13 @@ describe('player cli', () => {
     expect(parseArgs(['chart.bms', '--tui-fps', '59.94']).uiFps).toBe(59.94);
   });
 
+  test('cli: parses --measure as a 0-999 integer playback start measure', () => {
+    expect(parseArgs(['chart.bms']).measure).toBeUndefined();
+    expect(parseArgs(['chart.bms', '--measure', '0']).measure).toBe(0);
+    expect(parseArgs(['chart.bms', '--measure', '12.9']).measure).toBe(12);
+    expect(parseArgs(['chart.bms', '--measure', '999']).measure).toBe(999);
+  });
+
   test('cli: defaults visible notes limit to 8192 and accepts custom values', () => {
     expect(parseArgs(['chart.bms']).tuiVisibleNotesLimit).toBe(8192);
     expect(parseArgs(['chart.bms', '--tui-visible-notes-limit', '16384']).tuiVisibleNotesLimit).toBe(16384);
@@ -161,6 +168,13 @@ describe('player cli', () => {
   test('cli: rejects invalid --tui-fps values', () => {
     expect(() => parseArgs(['chart.bms', '--tui-fps', '0'])).toThrow('--tui-fps must be greater than 0');
     expect(() => parseArgs(['chart.bms', '--tui-fps', 'abc'])).toThrow('--tui-fps expects a numeric value');
+  });
+
+  test('cli: rejects invalid --measure values', () => {
+    expect(() => parseArgs(['chart.bms', '--measure'])).toThrow('--measure expects a numeric value');
+    expect(() => parseArgs(['chart.bms', '--measure', '-1'])).toThrow('--measure must be between 0 and 999');
+    expect(() => parseArgs(['chart.bms', '--measure', '1000'])).toThrow('--measure must be between 0 and 999');
+    expect(() => parseArgs(['chart.bms', '--measure', 'abc'])).toThrow('--measure expects a numeric value');
   });
 
   test('cli: rejects invalid --tui-visible-notes-limit values', () => {

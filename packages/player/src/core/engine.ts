@@ -175,6 +175,7 @@ export interface PlayerOptions {
   audioLeadMaxMs?: number;
   audioLeadStepUpMs?: number;
   audioLeadStepDownMs?: number;
+  startMeasure?: number;
   tui?: boolean;
   videoBgaStreaming?: boolean;
   signal?: AbortSignal;
@@ -344,6 +345,7 @@ export interface CreateAudioSessionContext {
   json: BeMusicJson;
   options: PlayerOptions;
   mode: 'auto' | 'manual';
+  playbackStartSeconds: number;
   onLoadProgress?: (progress: AudioSessionLoadProgress) => void;
 }
 
@@ -1545,6 +1547,7 @@ async function initializePlaybackRuntimeResources(params: {
   stateSignals: PlayerStateSignals;
   uiSignals: PlayerUiSignalBus;
   totalSeconds: number;
+  playbackStartSeconds: number;
   audioMode: 'auto' | 'manual';
 }): Promise<
   Awaited<ReturnType<typeof initializePlayerUiRuntime>> & {
@@ -1577,6 +1580,7 @@ async function initializePlaybackRuntimeResources(params: {
       params.resolvedJson,
       params.options,
       params.audioMode,
+      params.playbackStartSeconds,
       progressReporter.reportAudioProgress,
     ).then((audioSession) => {
       progressReporter.markAudioReady(audioSession, params.options.audio);
@@ -1806,6 +1810,14 @@ export async function autoPlay(json: BeMusicJson, options: PlayerOptions = {}): 
     inputTokenToChannels,
   } = playbackChart;
   let { totalSeconds } = playbackChart;
+  const playbackStartSeconds = Math.min(
+    totalSeconds,
+    resolvePlaybackStartSeconds(resolvedJson, timingResolver, options.startMeasure),
+  );
+  const playbackStartBeat = beatAtSeconds(playbackStartSeconds);
+  const remainingScorableCount = markNotesBeforePlaybackStart(scorableNotes, playbackStartSeconds);
+  markNotesBeforePlaybackStart(landmineNotes, playbackStartSeconds);
+  markNotesBeforePlaybackStart(invisibleNotes, playbackStartSeconds);
   // Hoist values that are constant for the entire play session out of the per-frame / per-event hot loops. Both fields
   // live on `resolvedJson`, which the engine treats as immutable from this point on. The auto-play loop touches each
   // many times per tick (LN body, every triggered sample, mine resolution, ...), and `resolveBmsBase` does a tiny
@@ -1813,15 +1825,15 @@ export async function autoPlay(json: BeMusicJson, options: PlayerOptions = {}): 
   const idBase = resolveBmsBase(resolvedJson);
   const wavResources = resolvedJson.resources.wav;
   const keyMap = new Map(laneBindings.map((binding) => [binding.channel, binding.keyLabel]));
-  const { summary, applyGaugeJudge } = createInitialPlayerSummary(scorableNotes.length, resolvedJson.metadata.total);
+  const { summary, applyGaugeJudge } = createInitialPlayerSummary(remainingScorableCount, resolvedJson.metadata.total);
   const scoreTracker = createScoreTracker();
   let combo = 0;
   let interruptedReason: PlayerInterruptReason | undefined;
   let highSpeed = resolveHighSpeedMultiplier(options.highSpeed);
   const stateSignals = createPlayerStateSignals(highSpeed);
   const uiSignals = createPlayerUiSignalBus({
-    currentBeat: 0,
-    currentSeconds: 0,
+    currentBeat: playbackStartBeat,
+    currentSeconds: playbackStartSeconds,
     totalSeconds,
     summary,
     notes: renderNotes,
@@ -1848,6 +1860,7 @@ export async function autoPlay(json: BeMusicJson, options: PlayerOptions = {}): 
     stateSignals,
     uiSignals,
     totalSeconds,
+    playbackStartSeconds,
     audioMode: 'auto',
   });
   totalSeconds = playbackTotalSeconds;
@@ -1949,11 +1962,11 @@ export async function autoPlay(json: BeMusicJson, options: PlayerOptions = {}): 
     });
     uiRuntime?.start();
     activeStateSignals?.publishJudgeCombo('READY', 0);
-    publishUiFrame(0, 0);
+    publishUiFrame(playbackStartSeconds, playbackStartBeat);
     emitPlayerLog(options, 'debug', 'ui.initial-frame.published', {
       mode: 'auto',
-      seconds: 0,
-      beat: 0,
+      seconds: playbackStartSeconds,
+      beat: playbackStartBeat,
     });
   }
 
@@ -2125,22 +2138,24 @@ export async function autoPlay(json: BeMusicJson, options: PlayerOptions = {}): 
       audioSession?.start();
       if (!uiEnabled) {
         writeRuntimeEventLog(writeOutput, 'playback-start', [
-          ['time', formatSeconds(0)],
+          ['time', formatSeconds(playbackStartSeconds)],
           ['mode', 'auto'],
         ]);
       }
 
       const chartClock = createPlaybackClock(
         createAudioPlaybackClockSource(audioSession),
-        audioOffsetMs + (audioSession?.chartStartDelayMs ?? 0),
+        audioOffsetMs + (audioSession?.chartStartDelayMs ?? 0) - gameSecondsToElapsedMs(playbackStartSeconds, speed),
       );
       playbackClock = chartClock;
-      playbackEventTracer.flushUntil(0);
+      playbackEventTracer.flushUntil(playbackStartSeconds);
       const badWindowSeconds = IIDX_BAD_WINDOW_MS / 1000;
-      let landmineExpireCursor = 0;
-      let invisibleExpireCursor = 0;
-      let autoPlayableAudioIndex = 0;
-      let autoPlayableJudgeIndex = 0;
+      let landmineExpireCursor = findFirstIndexAtOrAfterSeconds(landmineNotes, playbackStartSeconds);
+      let invisibleExpireCursor = findFirstIndexAtOrAfterSeconds(invisibleNotes, playbackStartSeconds);
+      let autoPlayableAudioIndex = findFirstIndexAtOrAfterSeconds(scorableNotes, playbackStartSeconds);
+      let autoPlayableJudgeIndex = autoPlayableAudioIndex;
+      realtimeAudioVolumeEventIndex = findFirstIndexAtOrAfterSeconds(realtimeAudioVolumeEvents, playbackStartSeconds);
+      realtimeAudioTriggerIndex = findFirstIndexAtOrAfterSeconds(realtimeAudioTriggers, playbackStartSeconds);
 
       const markExpiredLandmines = (referenceSeconds: number): void => {
         while (landmineExpireCursor < landmineNotes.length) {
@@ -2406,6 +2421,24 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
     inputTokenToChannels,
   } = playbackChart;
   let { totalSeconds } = playbackChart;
+  const playbackStartSeconds = Math.min(
+    totalSeconds,
+    resolvePlaybackStartSeconds(resolvedJson, timingResolver, options.startMeasure),
+  );
+  const playbackStartBeat = beatAtSeconds(playbackStartSeconds);
+  const remainingScorableCount = markNotesBeforePlaybackStart(scorableNotes, playbackStartSeconds);
+  const remainingLandmineCount = markNotesBeforePlaybackStart(landmineNotes, playbackStartSeconds);
+  const remainingInvisibleCount = markNotesBeforePlaybackStart(invisibleNotes, playbackStartSeconds);
+  const playbackStartJudgeRankCursor = findFirstIndexAtOrAfterSeconds(dynamicJudgeRankChanges, playbackStartSeconds);
+  if (playbackStartJudgeRankCursor > 0) {
+    judgeWindows = resolveBmsJudgeWindowsMsForPercent(
+      dynamicJudgeRankChanges[playbackStartJudgeRankCursor - 1]!.rankPercent,
+      options.judgeWindowMs,
+    );
+    badWindowMs = judgeWindows.bad;
+    badWindowSeconds = badWindowMs / 1000;
+  }
+  dynamicJudgeRankCursor = playbackStartJudgeRankCursor;
   // Hoisted constants — see the matching block in `autoPlay`. Same rationale: the manual-play loop touches both heavily
   // per tick / per input event, and these don't change across the play session.
   const idBase = resolveBmsBase(resolvedJson);
@@ -2415,7 +2448,7 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
   );
 
   const { summary, applyGaugeJudge, applyGaugeDelta } = createInitialPlayerSummary(
-    scorableNotes.length,
+    remainingScorableCount,
     resolvedJson.metadata.total,
   );
   const scoreTracker = createScoreTracker();
@@ -2423,8 +2456,8 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
   let highSpeed = resolveHighSpeedMultiplier(options.highSpeed);
   const stateSignals = createPlayerStateSignals(highSpeed);
   const uiSignals = createPlayerUiSignalBus({
-    currentBeat: 0,
-    currentSeconds: 0,
+    currentBeat: playbackStartBeat,
+    currentSeconds: playbackStartSeconds,
     totalSeconds,
     summary,
     notes: renderNotes,
@@ -2451,6 +2484,7 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
     stateSignals,
     uiSignals,
     totalSeconds,
+    playbackStartSeconds,
     audioMode: 'manual',
   });
   totalSeconds = playbackTotalSeconds;
@@ -2552,11 +2586,11 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
     });
     uiRuntime?.start();
     activeStateSignals?.publishJudgeCombo('READY', 0);
-    publishUiFrame(0, 0);
+    publishUiFrame(playbackStartSeconds, playbackStartBeat);
     emitPlayerLog(options, 'debug', 'ui.initial-frame.published', {
       mode: 'manual',
-      seconds: 0,
-      beat: 0,
+      seconds: playbackStartSeconds,
+      beat: playbackStartBeat,
     });
   }
 
@@ -2573,16 +2607,16 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
   audioSession?.start();
   if (!uiEnabled) {
     writeRuntimeEventLog(writeOutput, 'playback-start', [
-      ['time', formatSeconds(0)],
+      ['time', formatSeconds(playbackStartSeconds)],
       ['mode', autoScratchEnabled ? 'auto-scratch' : 'manual'],
     ]);
   }
 
   const playbackClock = createPlaybackClock(
     createAudioPlaybackClockSource(audioSession),
-    audioOffsetMs + (audioSession?.chartStartDelayMs ?? 0),
+    audioOffsetMs + (audioSession?.chartStartDelayMs ?? 0) - gameSecondsToElapsedMs(playbackStartSeconds, speed),
   );
-  playbackEventTracer.flushUntil(0);
+  playbackEventTracer.flushUntil(playbackStartSeconds);
   const horizon = (totalSeconds * 1000) / speed + leadInMs + maxBadWindowMs + 1000;
   let interruptedReason: PlayerInterruptReason | undefined;
   const longHoldUntilMsByChannel = new Map<string, number>();
@@ -3442,19 +3476,11 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
               // over the same elapsed duration. Without this branch HCNs were one-shot
               // gauge sinks — once a player broke a hold, the only recovery path was
               // through subsequent normal-note PERFECTs.
-              applyLoggedGaugeDelta(
-                nowSec,
-                elapsedSeconds * HELL_CHARGE_GAUGE_GAIN_PER_SECOND,
-                'hold-gain',
-              );
+              applyLoggedGaugeDelta(nowSec, elapsedSeconds * HELL_CHARGE_GAUGE_GAIN_PER_SECOND, 'hold-gain');
             } else {
               // HCN DRAIN — hold broken during this frame. Mirrors upstream
               // `JudgeManager.java:341-344`'s `gauge.update(3, 0.5f)` per 200 ms tick.
-              applyLoggedGaugeDelta(
-                nowSec,
-                -elapsedSeconds * HELL_CHARGE_GAUGE_DRAIN_PER_SECOND,
-                'hold-drain',
-              );
+              applyLoggedGaugeDelta(nowSec, -elapsedSeconds * HELL_CHARGE_GAUGE_DRAIN_PER_SECOND, 'hold-drain');
             }
           }
           hold.gaugeDrainCursorSeconds = accumulateUntilSeconds;
@@ -3725,6 +3751,7 @@ async function createAudioSessionIfEnabled(
   json: BeMusicJson,
   options: PlayerOptions,
   mode: 'auto' | 'manual',
+  playbackStartSeconds: number,
   onLoadProgress?: (progress: AudioSessionLoadProgress) => void,
 ): Promise<AudioSession | undefined> {
   throwIfAborted(options.signal);
@@ -3742,7 +3769,13 @@ async function createAudioSessionIfEnabled(
   // (fall through to the Node sink); this lets a runtime conditionally opt out at runtime (e.g. browser without
   // AudioContext support).
   if (options.createAudioSession) {
-    const customSession = await options.createAudioSession({ json, options, mode, onLoadProgress });
+    const customSession = await options.createAudioSession({
+      json,
+      options,
+      mode,
+      playbackStartSeconds,
+      onLoadProgress,
+    });
     throwIfAborted(options.signal);
     if (customSession) {
       writeOutput(`Audio backend: ${customSession.backendLabel}\n`);
@@ -3814,11 +3847,8 @@ async function createAudioSessionIfEnabled(
 
   writeOutput(`Audio backend: ${output.label}\n`);
 
-  const eventPlaybackMap = buildEventPlaybackMap(json, inferBmsLnTypeWhenMissing);
-  onLoadProgress?.({
-    ratio: 1,
-    message: 'Audio ready.',
-  });
+  const runtimeTimingResolver = createTimingResolver(json);
+  const eventPlaybackMap = buildEventPlaybackMap(json, inferBmsLnTypeWhenMissing, runtimeTimingResolver);
 
   let closed = false;
   let abortRequested = false;
@@ -3828,6 +3858,80 @@ async function createAudioSessionIfEnabled(
   const activeVoices: ActiveVoice[] = [];
   let currentBgmDynamicGain = 1;
   let currentPlayDynamicGain = 1;
+
+  const triggerAudioEvent = (event: BeMusicEvent, seekOffsetSeconds = 0): void => {
+    if (draining || abortRequested || paused) {
+      return;
+    }
+    const normalizedChannel = normalizeChannel(event.channel);
+    if (isBmsDynamicVolumeChangeChannel(normalizedChannel)) {
+      const dynamicGain = parseBmsDynamicVolumeGain(event.value);
+      if (dynamicGain === undefined) {
+        return;
+      }
+      if (isBmsKeyVolumeChangeChannel(normalizedChannel)) {
+        currentPlayDynamicGain = dynamicGain;
+      } else if (isBmsBgmVolumeChangeChannel(normalizedChannel)) {
+        currentBgmDynamicGain = dynamicGain;
+      }
+      return;
+    }
+    if (lnobjEndEvents.has(event)) {
+      return;
+    }
+    const normalized = normalizeObjectKey(event.value, runtimeSampleIdBase);
+    const sample = samplesByKey.get(normalized);
+    if (!sample) {
+      return;
+    }
+    const playback = eventPlaybackMap.get(event);
+    const offsetSeconds = (playback?.offsetSeconds ?? 0) + Math.max(0, seekOffsetSeconds);
+    const offsetFrames = Math.max(0, Math.round(offsetSeconds * sample.sampleRate));
+    const durationFrames =
+      typeof playback?.durationSeconds === 'number' && Number.isFinite(playback.durationSeconds)
+        ? Math.max(1, Math.round(playback.durationSeconds * sample.sampleRate))
+        : sample.left.length - Math.max(0, Math.round((playback?.offsetSeconds ?? 0) * sample.sampleRate));
+    const baseOffsetFrames = Math.max(0, Math.round((playback?.offsetSeconds ?? 0) * sample.sampleRate));
+    const endPosition = Math.min(sample.left.length, baseOffsetFrames + durationFrames);
+    if (offsetFrames >= endPosition) {
+      return;
+    }
+    if (json.sourceFormat === 'bms') {
+      removeActiveVoicesInPlace(activeVoices, (voice) => voice.sampleKey === normalized);
+    }
+    if (playback?.sliceId && activeVoices.some((voice) => voice.sliceId === playback.sliceId)) {
+      return;
+    }
+    const isPlayLaneSound = isPlayLaneSoundChannel(normalizedChannel);
+    const voiceGain =
+      (isPlayLaneSound ? playVolume : bgmVolume) * (isPlayLaneSound ? currentPlayDynamicGain : currentBgmDynamicGain);
+    if (voiceGain <= 0) {
+      return;
+    }
+    activeVoices.push({
+      sample,
+      position: offsetFrames,
+      endPosition,
+      channel: normalizeChannel(event.channel),
+      sampleKey: normalized,
+      samplePath: json.resources.wav[normalized],
+      sliceId: playback?.sliceId,
+      gain: voiceGain,
+    });
+  };
+
+  primeRealtimeAudioAtPlaybackStart({
+    json,
+    resolver: runtimeTimingResolver,
+    inferBmsLnTypeWhenMissing,
+    playbackStartSeconds,
+    triggerAudioEvent,
+  });
+
+  onLoadProgress?.({
+    ratio: 1,
+    message: 'Audio ready.',
+  });
 
   output.onError(() => {
     writeOutput(`Audio playback stream error (${output.label}).\n`);
@@ -4542,9 +4646,9 @@ async function buildRuntimeSampleMap(
 function buildEventPlaybackMap(
   json: BeMusicJson,
   inferBmsLnTypeWhenMissing: boolean,
+  resolver: TimingResolver = createTimingResolver(json),
 ): Map<BeMusicEvent, PlayableNotePlayback> {
   const playbackMap = new Map<BeMusicEvent, PlayableNotePlayback>();
-  const resolver = createTimingResolver(json);
   for (const trigger of collectSampleTriggers(json, resolver, { inferBmsLnTypeWhenMissing })) {
     playbackMap.set(trigger.event, {
       offsetSeconds: trigger.sampleOffsetSeconds,
@@ -4553,6 +4657,51 @@ function buildEventPlaybackMap(
     });
   }
   return playbackMap;
+}
+
+function primeRealtimeAudioAtPlaybackStart(params: {
+  json: BeMusicJson;
+  resolver: TimingResolver;
+  inferBmsLnTypeWhenMissing: boolean;
+  playbackStartSeconds: number;
+  triggerAudioEvent: (event: BeMusicEvent, seekOffsetSeconds?: number) => void;
+}): void {
+  if (params.playbackStartSeconds <= REALTIME_AUDIO_TRIGGER_EPSILON_SECONDS) {
+    return;
+  }
+  const sortedEventOrder = new Map<BeMusicEvent, number>();
+  sortEvents(params.json.events).forEach((event, index) => {
+    sortedEventOrder.set(event, index);
+  });
+  const preStartEvents: Array<{ event: BeMusicEvent; seconds: number; kind: 'sample' | 'volume' }> = [];
+  for (const trigger of collectRealtimeAudioTriggers(
+    params.json,
+    params.inferBmsLnTypeWhenMissing,
+    () => true,
+    params.resolver,
+  )) {
+    if (trigger.seconds < params.playbackStartSeconds - REALTIME_AUDIO_TRIGGER_EPSILON_SECONDS) {
+      preStartEvents.push({ event: trigger.event, seconds: trigger.seconds, kind: 'sample' });
+    }
+  }
+  for (const volumeEvent of collectRealtimeAudioVolumeEvents(params.json, params.resolver)) {
+    if (volumeEvent.seconds < params.playbackStartSeconds - REALTIME_AUDIO_TRIGGER_EPSILON_SECONDS) {
+      preStartEvents.push({ event: volumeEvent.event, seconds: volumeEvent.seconds, kind: 'volume' });
+    }
+  }
+  preStartEvents.sort((left, right) => {
+    const secondsDelta = left.seconds - right.seconds;
+    if (Math.abs(secondsDelta) > 1e-9) {
+      return secondsDelta;
+    }
+    return (sortedEventOrder.get(left.event) ?? 0) - (sortedEventOrder.get(right.event) ?? 0);
+  });
+  for (const item of preStartEvents) {
+    params.triggerAudioEvent(
+      item.event,
+      item.kind === 'sample' ? Math.max(0, params.playbackStartSeconds - item.seconds) : 0,
+    );
+  }
 }
 
 function collectRealtimeAudioTriggers(
@@ -4751,6 +4900,58 @@ function createPlaybackClock(source: PlaybackClockSource, startOffsetMs = 0): Pl
 
 function elapsedMsToGameSeconds(elapsedMs: number, speed: number): number {
   return Math.max(0, (elapsedMs / 1000) * speed);
+}
+
+function gameSecondsToElapsedMs(seconds: number, speed: number): number {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  const safeSpeed = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  return (safeSeconds * 1000) / safeSpeed;
+}
+
+function resolvePlaybackStartSeconds(
+  json: BeMusicJson,
+  resolver: TimingResolver,
+  startMeasure: number | undefined,
+): number {
+  if (typeof startMeasure !== 'number' || !Number.isFinite(startMeasure) || startMeasure <= 0) {
+    return 0;
+  }
+  const measure = Math.max(0, Math.min(999, Math.trunc(startMeasure)));
+  if (measure <= 0) {
+    return 0;
+  }
+  const beatResolver = createBeatResolver(json);
+  const seconds = resolver.beatToSeconds(beatResolver.measureToBeat(measure, 0));
+  return Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+}
+
+function findFirstIndexAtOrAfterSeconds<T extends { seconds: number }>(
+  items: ReadonlyArray<T>,
+  seconds: number,
+): number {
+  return findFirstIndexAtOrAfter(
+    items,
+    Math.max(0, seconds) - REALTIME_AUDIO_TRIGGER_EPSILON_SECONDS,
+    (item) => item.seconds,
+  );
+}
+
+function markNotesBeforePlaybackStart<T extends { seconds: number; judged?: boolean }>(
+  notes: ReadonlyArray<T>,
+  playbackStartSeconds: number,
+): number {
+  if (playbackStartSeconds <= 0) {
+    return notes.length;
+  }
+  let remaining = 0;
+  for (const note of notes) {
+    if (note.seconds < playbackStartSeconds - REALTIME_AUDIO_TRIGGER_EPSILON_SECONDS) {
+      note.judged = true;
+    } else {
+      remaining += 1;
+    }
+  }
+  return remaining;
 }
 
 /**

@@ -151,6 +151,7 @@ interface CliArgs {
   audioLeadMaxMs?: number;
   audioLeadStepUpMs?: number;
   audioLeadStepDownMs?: number;
+  measure?: number;
   tui: boolean;
 }
 
@@ -1023,6 +1024,7 @@ function createPlayOptionsFromCliArgs(args: CliArgs, chartPath: string) {
     audioLeadMaxMs: args.audioLeadMaxMs,
     audioLeadStepUpMs: args.audioLeadStepUpMs,
     audioLeadStepDownMs: args.audioLeadStepDownMs,
+    startMeasure: args.measure,
     laneModeExtension: resolveChartLaneModeExtension(chartPath),
     tui: args.tui,
     kittyGraphics: args.kittyGraphics,
@@ -1589,6 +1591,9 @@ function consumeCliValueArg(args: CliArgs, rawArgs: string[], index: number): nu
     case '--audio-lead-step-down-ms':
       args.audioLeadStepDownMs = Number.parseFloat(rawValue);
       return index + 1;
+    case '--measure':
+      args.measure = parseMeasureArg(rawValue);
+      return index + 1;
     default:
       return undefined;
   }
@@ -1679,6 +1684,17 @@ function parseTuiVisibleNotesLimitArg(raw: string | undefined): number {
   return parsed;
 }
 
+function parseMeasureArg(raw: string | undefined): number {
+  const parsed = Number.parseFloat(raw ?? '');
+  if (!Number.isFinite(parsed)) {
+    throw new Error('--measure expects a numeric value');
+  }
+  if (parsed < 0 || parsed > 999) {
+    throw new Error('--measure must be between 0 and 999');
+  }
+  return Math.trunc(parsed);
+}
+
 function parseTuiNoteHeightArg(raw: string | undefined): TuiNoteHeight {
   if (raw === 'full') {
     return MAX_TUI_NOTE_HEIGHT;
@@ -1721,6 +1737,7 @@ function printUsage(): void {
       '  --auto                    Enable auto play mode (default: off)',
       '  --auto-scratch            Enable scratch auto mode (16ch/26ch only)',
       '  --speed <rate>            Playback speed multiplier (default: 1)',
+      '  --measure <value>         Start playback from measure 0-999 (default: 0)',
       `  --tui-fps <value>        Target TUI refresh rate while playing (default: ${DEFAULT_TUI_FPS})`,
       `  --tui-visible-notes-limit <count>  Max notes considered in the visible render window (default: ${DEFAULT_TUI_VISIBLE_NOTES_LIMIT})`,
       `  --tui-note-height <level> Height of regular notes and judge line: 1-8, or full/half aliases (default: ${DEFAULT_TUI_NOTE_HEIGHT})`,
