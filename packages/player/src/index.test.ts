@@ -340,6 +340,39 @@ describe('player', () => {
     expect(frameEndSeconds.at(-1)).toBeGreaterThanOrEqual(2);
   });
 
+  test('player: startMeasure begins auto play at the requested measure without scoring prior notes', async () => {
+    const json = createEmptyJson('bms');
+    json.metadata.bpm = 120;
+    json.events = [
+      { measure: 0, channel: '11', position: [0, 1] as const, value: '01' },
+      { measure: 1, channel: '11', position: [0, 1] as const, value: '02' },
+    ];
+
+    const initialFrames: number[] = [];
+    const summary = await autoPlay(json, {
+      auto: true,
+      startMeasure: 1,
+      speed: 240,
+      leadInMs: 0,
+      audio: false,
+      createUiRuntime: async (context) => {
+        initialFrames.push(context.uiSignals.getFrame().currentSeconds);
+        return {
+          tuiEnabled: true,
+          start: () => undefined,
+          stop: () => undefined,
+          dispose: () => undefined,
+          triggerPoor: () => undefined,
+          clearPoor: () => undefined,
+        };
+      },
+    });
+
+    expect(initialFrames[0]).toBeCloseTo(2);
+    expect(summary.total).toBe(1);
+    expect(summary.perfect).toBe(1);
+  });
+
   test('player: starts audio preparation while UI BGA initialization is still pending', async () => {
     const json = createEmptyJson('bms');
     json.metadata.bpm = 120;
@@ -565,6 +598,32 @@ describe('player', () => {
     });
 
     expect(hasAnyNonSilentAudioWrite()).toBe(false);
+  });
+
+  test('player: startMeasure keeps already-playing audio alive with a seek offset', async () => {
+    const json = createEmptyJson('bms');
+    json.metadata.bpm = 4800;
+    json.resources.wav['01'] = 'not-found.wav';
+    json.events = [
+      { measure: 0, channel: '01', position: [0, 1] as const, value: '01' },
+      { measure: 2, channel: '11', position: [0, 1] as const, value: '02' },
+    ];
+
+    await autoPlay(json, {
+      auto: true,
+      startMeasure: 1,
+      speed: 1,
+      leadInMs: 0,
+      audio: true,
+      audioHeadPaddingMs: 0,
+      audioLeadMs: 0,
+      audioLeadMaxMs: 0,
+      limiter: false,
+      tui: false,
+      writeOutput: () => undefined,
+    });
+
+    expect(hasAnyNonSilentAudioWrite()).toBe(true);
   });
 
   test('player: manual play waits for UI BGA playback tail after notes are judged', async () => {
@@ -1100,6 +1159,7 @@ describe('player', () => {
 
     expect(seenContexts).toHaveLength(1);
     expect(seenContexts[0]?.mode).toBe('auto');
+    expect(seenContexts[0]?.playbackStartSeconds).toBe(0);
     // The factory receives the post-#RANDOM-resolution clone, not the caller's input. The clone preserves the
     // chart's identifying fields (bpm / events / resources) so a backend can re-derive everything it needs.
     expect(seenContexts[0]?.json.metadata.bpm).toBe(120);

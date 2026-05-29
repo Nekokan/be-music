@@ -41,6 +41,7 @@ export interface NodeGameplayWorkerPlayOptions {
   audioLeadMaxMs?: number;
   audioLeadStepUpMs?: number;
   audioLeadStepDownMs?: number;
+  startMeasure?: number;
   laneModeExtension?: string;
   tui?: boolean;
   kittyGraphics?: boolean;
