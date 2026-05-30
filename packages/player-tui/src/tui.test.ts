@@ -622,6 +622,68 @@ describe('player tui', () => {
     tui.stop();
   });
 
+  test('tui: renders PMS 9-key notes with popn lane colors', () => {
+    mockTerminal({ columns: 120, rows: 32 });
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((() => true) as typeof process.stdout.write);
+    const lanes = ['15', '11', '23', '12', '25', '22', '13', '24', '14'].map((channel, index) => ({
+      channel,
+      key: String(index + 1),
+    }));
+    const tui = new PlayerTui({
+      mode: 'MANUAL',
+      laneDisplayMode: '9 KEY (PMS-STD)',
+      title: 'PMS Color Test',
+      lanes,
+      speed: 1,
+      highSpeed: 1,
+      judgeWindowMs: 16.67,
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+    });
+
+    tui.start();
+    writeSpy.mockClear();
+
+    tui.render({
+      currentBeat: 0,
+      currentSeconds: 0,
+      totalSeconds: 120,
+      summary: {
+        total: 9,
+        perfect: 0,
+        fast: 0,
+        slow: 0,
+        great: 0,
+        good: 0,
+        bad: 0,
+        poor: 0,
+        exScore: 0,
+        score: 0,
+      },
+      notes: lanes.map((lane) => ({
+        channel: lane.channel,
+        beat: 0,
+        seconds: 0,
+        judged: false,
+      })),
+    });
+
+    const renderOutput = String(writeSpy.mock.calls.at(-1)?.[0] ?? '');
+    expect(extractUnderlinedForegroundRgb(renderOutput)).toEqual([
+      '255;255;255',
+      '255;215;95',
+      '135;255;118',
+      '95;135;255',
+      '255;95;95',
+      '95;135;255',
+      '135;255;118',
+      '255;215;95',
+      '255;255;255',
+    ]);
+
+    tui.stop();
+  });
+
   test('tui: keeps rendered lines within terminal height when optional rows are enabled', () => {
     mockTerminal({ columns: 120, rows: 32 });
     const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((() => true) as typeof process.stdout.write);
@@ -734,4 +796,9 @@ function extractVisibleFrame(renderOutput: string): string {
       : renderOutput;
   // eslint-disable-next-line no-control-regex
   return visibleFrame.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+}
+
+function extractUnderlinedForegroundRgb(renderOutput: string): string[] {
+  // eslint-disable-next-line no-control-regex
+  return [...renderOutput.matchAll(/\u001b\[38;2;(\d+);(\d+);(\d+);4m/g)].map(([, r, g, b]) => `${r};${g};${b}`);
 }
