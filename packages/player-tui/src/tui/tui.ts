@@ -177,9 +177,12 @@ type StructuredLaneCellRenderer = (
   laneWidth: number,
   sourceChannel: string,
   noteHeight: TuiNoteHeight,
+  laneIndex: number,
+  noteColorResolver: NoteColorResolver,
 ) => string;
 
 type StructuredLaneSectionRenderer = (cells: string[], noteHeight: TuiNoteHeight) => string;
+type NoteColorResolver = (channel: string, laneIndex: number) => RgbColor | undefined;
 
 const BLACK_RGB: RgbColor = { r: 0, g: 0, b: 0 };
 const WHITE_KEY_LANE_BG_RGB: RgbColor = { r: 24, g: 36, b: 56 };
@@ -194,6 +197,8 @@ const LANE_LABEL_RGB: RgbColor = { r: 198, g: 198, b: 198 };
 const RED_NOTE_RGB: RgbColor = { r: 255, g: 95, b: 95 };
 const BLUE_NOTE_RGB: RgbColor = { r: 95, g: 135, b: 255 };
 const WHITE_NOTE_RGB: RgbColor = { r: 255, g: 255, b: 255 };
+const YELLOW_NOTE_RGB: RgbColor = { r: 255, g: 215, b: 95 };
+const GREEN_NOTE_RGB: RgbColor = { r: 135, g: 255, b: 118 };
 const INVISIBLE_NOTE_RGB: RgbColor = { r: 102, g: 224, b: 161 };
 const MEASURE_LINE_RGB: RgbColor = { r: 158, g: 158, b: 158 };
 const MINE_FOREGROUND_RGB: RgbColor = { r: 255, g: 255, b: 255 };
@@ -218,6 +223,17 @@ const GROOVE_GAUGE_CLEAR_RGB: RgbColor = { r: 255, g: 72, b: 72 };
 const GROOVE_GAUGE_CLEAR_EMPTY_RGB: RgbColor = { r: 84, g: 18, b: 18 };
 const PLAY_PROGRESS_GROOVE_RGB: RgbColor = { r: 18, g: 18, b: 18 };
 const PLAY_PROGRESS_HEAD_RGB: RgbColor = { r: 255, g: 186, b: 54 };
+const POPN_9KEY_NOTE_COLORS: ReadonlyArray<RgbColor> = [
+  WHITE_NOTE_RGB,
+  YELLOW_NOTE_RGB,
+  GREEN_NOTE_RGB,
+  BLUE_NOTE_RGB,
+  RED_NOTE_RGB,
+  BLUE_NOTE_RGB,
+  GREEN_NOTE_RGB,
+  YELLOW_NOTE_RGB,
+  WHITE_NOTE_RGB,
+];
 const RAINBOW_RGB_STEPS: RgbColor[] = [
   { r: 255, g: 0, b: 0 },
   { r: 255, g: 135, b: 0 },
@@ -818,6 +834,7 @@ export class PlayerTui {
       lines.push(`AUDIO VOICES ${voiceCount}  FILES ${formatActiveAudioFiles(frame.activeAudioFiles ?? [])}`);
     }
     lines.push('');
+    const noteColorResolver = createNoteColorResolver(this.options.laneDisplayMode);
     const laneLines: string[] = [];
     if (showLaneChannels) {
       laneLines.push(
@@ -827,6 +844,10 @@ export class PlayerTui {
           this.laneWidths,
           this.options.splitAfterIndex,
           this.options.noteHeight,
+          undefined,
+          undefined,
+          true,
+          noteColorResolver,
         ),
       );
     }
@@ -844,6 +865,7 @@ export class PlayerTui {
             this.options.noteHeight,
             laneHighlightRatios,
             gridSourceChannels[rowIndex],
+            noteColorResolver,
           ),
         );
         continue;
@@ -858,6 +880,7 @@ export class PlayerTui {
             this.options.noteHeight,
             laneHighlightRatios,
             gridSourceChannels[rowIndex],
+            noteColorResolver,
           ),
         );
         continue;
@@ -871,6 +894,8 @@ export class PlayerTui {
           this.options.noteHeight,
           laneHighlightRatios,
           gridSourceChannels[rowIndex],
+          true,
+          noteColorResolver,
         ),
       );
     }
@@ -1269,6 +1294,7 @@ function renderLaneRow(
   laneHighlightRatios = new Map<number, number>(),
   sourceChannels?: string[],
   applyLaneBackground = true,
+  noteColorResolver: NoteColorResolver = resolveDefaultNoteColor,
 ): string {
   const cells = values.map((value, index) => {
     const laneWidth = laneWidths[index] ?? DEFAULT_LANE_WIDTH;
@@ -1291,7 +1317,7 @@ function renderLaneRow(
     const decoratedCell = isMine
       ? colorizeMine(cell)
       : noteCell
-        ? colorizeNote(cell, laneChannel, isInvisibleNote, noteUnderline)
+        ? colorizeNote(cell, laneChannel, isInvisibleNote, noteUnderline, noteColorResolver, index)
         : value === MEASURE_LINE_SYMBOL
           ? colorizeMeasureLine(cell)
           : isLaneFill || isLaneCeiling
@@ -1397,6 +1423,7 @@ function renderMeasureRow(
   noteHeight: TuiNoteHeight = DEFAULT_TUI_NOTE_HEIGHT,
   laneHighlightRatios = new Map<number, number>(),
   sourceChannels?: string[],
+  noteColorResolver: NoteColorResolver = resolveDefaultNoteColor,
 ): string {
   return renderStructuredLaneRow(
     values,
@@ -1408,6 +1435,7 @@ function renderMeasureRow(
     sourceChannels,
     renderMeasureLaneCell,
     (cells) => renderMeasureSection(cells),
+    noteColorResolver,
   );
 }
 
@@ -1422,6 +1450,8 @@ function renderMeasureLaneCell(
   laneWidth: number,
   sourceChannel: string,
   noteHeight: TuiNoteHeight = DEFAULT_TUI_NOTE_HEIGHT,
+  laneIndex = -1,
+  noteColorResolver: NoteColorResolver = resolveDefaultNoteColor,
 ): string {
   const safeWidth = Math.max(1, laneWidth);
   const noteCell = resolveNoteLikeLaneCell(value);
@@ -1431,6 +1461,8 @@ function renderMeasureLaneCell(
       sourceChannel,
       noteCell.invisible,
       noteCell.underline,
+      noteColorResolver,
+      laneIndex,
     );
   }
   if (value === MINE_NOTE_SYMBOL) {
@@ -1447,6 +1479,7 @@ function renderJudgeRow(
   noteHeight: TuiNoteHeight = DEFAULT_TUI_NOTE_HEIGHT,
   laneHighlightRatios = new Map<number, number>(),
   sourceChannels?: string[],
+  noteColorResolver: NoteColorResolver = resolveDefaultNoteColor,
 ): string {
   return renderStructuredLaneRow(
     values,
@@ -1458,6 +1491,7 @@ function renderJudgeRow(
     sourceChannels,
     renderJudgeLaneCell,
     renderJudgeSection,
+    noteColorResolver,
   );
 }
 
@@ -1471,13 +1505,21 @@ function renderStructuredLaneRow(
   sourceChannels: string[] | undefined,
   renderCell: StructuredLaneCellRenderer,
   renderSectionCells: StructuredLaneSectionRenderer,
+  noteColorResolver: NoteColorResolver,
 ): string {
   const renderSlice = (startIndex: number, endIndex: number): string => {
     const cells: string[] = [];
     for (let index = startIndex; index < endIndex; index += 1) {
       const laneWidth = laneWidths[index] ?? DEFAULT_LANE_WIDTH;
       const channel = resolveLaneRenderChannel(index, channels, sourceChannels);
-      let cell = renderCell(values[index] ?? LANE_FILL_SYMBOL, laneWidth, channel, noteHeight);
+      let cell = renderCell(
+        values[index] ?? LANE_FILL_SYMBOL,
+        laneWidth,
+        channel,
+        noteHeight,
+        index,
+        noteColorResolver,
+      );
       const highlightRatio = laneHighlightRatios.get(index);
       if (highlightRatio !== undefined) {
         cell = highlightCell(cell, channel, highlightRatio);
@@ -1509,6 +1551,8 @@ function renderJudgeLaneCell(
   laneWidth: number,
   sourceChannel: string,
   noteHeight: TuiNoteHeight = DEFAULT_TUI_NOTE_HEIGHT,
+  laneIndex = -1,
+  noteColorResolver: NoteColorResolver = resolveDefaultNoteColor,
 ): string {
   const safeWidth = Math.max(1, laneWidth);
   const noteCell = resolveNoteLikeLaneCell(value);
@@ -1518,6 +1562,8 @@ function renderJudgeLaneCell(
       sourceChannel,
       noteCell.invisible,
       noteCell.underline,
+      noteColorResolver,
+      laneIndex,
     );
   }
   if (value === MINE_NOTE_SYMBOL) {
@@ -1760,18 +1806,49 @@ function colorizeLaneLabel(symbol: string): string {
   return colorizeText(symbol, LANE_LABEL_RGB);
 }
 
-function colorizeNote(symbol: string, channel: string, invisible = false, underline = false): string {
+function createNoteColorResolver(laneDisplayMode: string): NoteColorResolver {
+  if (isPopn9KeyLaneDisplayMode(laneDisplayMode)) {
+    return resolvePopn9KeyNoteColor;
+  }
+  return resolveDefaultNoteColor;
+}
+
+function isPopn9KeyLaneDisplayMode(laneDisplayMode: string): boolean {
+  return laneDisplayMode.toUpperCase().includes('9 KEY');
+}
+
+function resolvePopn9KeyNoteColor(channel: string, laneIndex: number): RgbColor | undefined {
+  return POPN_9KEY_NOTE_COLORS[laneIndex] ?? resolveDefaultNoteColor(channel, laneIndex);
+}
+
+function resolveDefaultNoteColor(channel: string, _laneIndex = -1): RgbColor | undefined {
+  const normalized = channel.toUpperCase();
+  if (RED_NOTE_CHANNELS.has(normalized)) {
+    return RED_NOTE_RGB;
+  }
+  if (BLUE_NOTE_CHANNELS.has(normalized)) {
+    return BLUE_NOTE_RGB;
+  }
+  if (WHITE_NOTE_CHANNELS.has(normalized)) {
+    return WHITE_NOTE_RGB;
+  }
+  return undefined;
+}
+
+function colorizeNote(
+  symbol: string,
+  channel: string,
+  invisible = false,
+  underline = false,
+  noteColorResolver: NoteColorResolver = resolveDefaultNoteColor,
+  laneIndex = -1,
+): string {
   if (invisible) {
     return colorizeText(symbol, INVISIBLE_NOTE_RGB, undefined, underline);
   }
-  if (RED_NOTE_CHANNELS.has(channel)) {
-    return colorizeText(symbol, RED_NOTE_RGB, undefined, underline);
-  }
-  if (BLUE_NOTE_CHANNELS.has(channel)) {
-    return colorizeText(symbol, BLUE_NOTE_RGB, undefined, underline);
-  }
-  if (WHITE_NOTE_CHANNELS.has(channel)) {
-    return colorizeText(symbol, WHITE_NOTE_RGB, undefined, underline);
+  const color = noteColorResolver(channel, laneIndex);
+  if (color) {
+    return colorizeText(symbol, color, undefined, underline);
   }
   return symbol;
 }
