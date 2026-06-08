@@ -97,6 +97,60 @@ describe('player tui', () => {
     expect(tui.isSupported()).toBe(true);
   });
 
+  test('tui: renders subtitle and subartist as dim secondary metadata', () => {
+    mockTerminal({ columns: 120, rows: 32 });
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((() => true) as typeof process.stdout.write);
+    const tui = new PlayerTui({
+      mode: 'AUTO',
+      laneDisplayMode: '7 KEY',
+      title: 'Main Title',
+      subtitle: '[Another]',
+      artist: 'Main Artist',
+      subartist: 'movie:Codex',
+      lanes: [
+        { channel: '16', key: 'A', isScratch: true },
+        { channel: '11', key: 'S' },
+        { channel: '12', key: 'D' },
+      ],
+      speed: 1,
+      highSpeed: 1,
+      judgeWindowMs: 16.67,
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+    });
+
+    tui.start();
+    writeSpy.mockClear();
+    tui.render({
+      currentBeat: 0,
+      currentSeconds: 0,
+      totalSeconds: 120,
+      summary: {
+        total: 0,
+        perfect: 0,
+        fast: 0,
+        slow: 0,
+        great: 0,
+        good: 0,
+        bad: 0,
+        poor: 0,
+        exScore: 0,
+        score: 0,
+      },
+      notes: [],
+    });
+
+    const renderOutput = String(writeSpy.mock.calls.at(-1)?.[0] ?? '');
+    const visibleLines = extractVisibleFrame(renderOutput).split('\n');
+    expect(visibleLines[1]?.trimEnd()).toBe('Main Title [Another] / Main Artist movie:Codex');
+    expect(extractSecondaryMetadataForegrounds(renderOutput)).toEqual([
+      { color: '150;150;150', value: '[Another]' },
+      { color: '150;150;150', value: 'movie:Codex' },
+    ]);
+
+    tui.stop();
+  });
+
   test('tui: reacts to alien-signals driven HUD state updates', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -801,4 +855,14 @@ function extractVisibleFrame(renderOutput: string): string {
 function extractUnderlinedForegroundRgb(renderOutput: string): string[] {
   // eslint-disable-next-line no-control-regex
   return [...renderOutput.matchAll(/\u001b\[38;2;(\d+);(\d+);(\d+);4m/g)].map(([, r, g, b]) => `${r};${g};${b}`);
+}
+
+function extractSecondaryMetadataForegrounds(renderOutput: string): Array<{ color: string; value: string }> {
+  // eslint-disable-next-line no-control-regex
+  return [...renderOutput.matchAll(/\u001b\[38;2;(\d+);(\d+);(\d+)m([^\u001b]+)\u001b\[0m/g)]
+    .map(([, r, g, b, value]) => ({
+      color: `${r};${g};${b}`,
+      value: value ?? '',
+    }))
+    .filter((entry) => entry.color === '150;150;150');
 }

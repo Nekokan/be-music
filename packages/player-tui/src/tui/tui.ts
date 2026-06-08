@@ -35,7 +35,9 @@ interface TuiOptions {
   mode: 'AUTO' | 'MANUAL' | 'AUTO SCRATCH';
   laneDisplayMode: string;
   title: string;
+  subtitle?: string;
   artist?: string;
+  subartist?: string;
   genre?: string;
   player?: number;
   rank?: number;
@@ -209,6 +211,7 @@ const INPUT_KEY_DARK_FOREGROUND_RGB: RgbColor = { r: 250, g: 250, b: 250 };
 const INPUT_KEY_DARK_BACKGROUND_RGB: RgbColor = { r: 16, g: 16, b: 16 };
 const INPUT_KEY_SCRATCH_BACKGROUND_RGB: RgbColor = { r: 138, g: 138, b: 138 };
 const INPUT_KEY_ACTIVE_BACKGROUND_RGB: RgbColor = { r: 255, g: 135, b: 0 };
+const SECONDARY_METADATA_RGB: RgbColor = { r: 150, g: 150, b: 150 };
 const PAUSE_FOREGROUND_RGB: RgbColor = { r: 255, g: 255, b: 255 };
 const PAUSE_BACKGROUND_RGB: RgbColor = { r: 200, g: 59, b: 59 };
 const GREAT_JUDGE_RGB: RgbColor = { r: 255, g: 215, b: 95 };
@@ -797,7 +800,9 @@ export class PlayerTui {
     const stopLabel = remainingStopSeconds > 0 ? `${formatStopSeconds(remainingStopSeconds)}s` : '-';
     const audioBackendLabel = formatAudioBackendLabel(frame.audioBackend);
     lines.push(`BMS PLAYER TUI [${this.options.mode}]  AUDIO ${audioBackendLabel}`);
-    lines.push(`${this.options.title}${this.options.artist ? ` / ${this.options.artist}` : ''}`);
+    lines.push(
+      renderTitleArtistLine(this.options.title, this.options.subtitle, this.options.artist, this.options.subartist),
+    );
     lines.push(`GENRE ${formatGenreLabel(this.options.genre)}`);
     lines.push(
       `${renderProgress(frame.currentSeconds, frame.totalSeconds)}  ${formatSeconds(frame.currentSeconds)} / ${formatSeconds(frame.totalSeconds)}`,
@@ -1222,6 +1227,32 @@ function renderProgress(currentSeconds: number, totalSeconds: number): string {
   const ratio = clamp(currentSeconds / safeTotal, 0, 1);
   const filled = Math.round(barLength * ratio);
   return `[${'#'.repeat(filled)}${'-'.repeat(barLength - filled)}] ${Math.round(ratio * 100)}%`;
+}
+
+function renderTitleArtistLine(
+  title: string,
+  subtitle: string | undefined,
+  artist: string | undefined,
+  subartist: string | undefined,
+): string {
+  const titlePart = renderPrimarySecondaryText(title, subtitle);
+  const artistPart = renderPrimarySecondaryText(artist, subartist);
+  return artistPart ? `${titlePart} / ${artistPart}` : titlePart;
+}
+
+function renderPrimarySecondaryText(primary: string | undefined, secondary: string | undefined): string {
+  const parts: string[] = [];
+  if (isNonEmptyMetadataText(primary)) {
+    parts.push(primary);
+  }
+  if (isNonEmptyMetadataText(secondary)) {
+    parts.push(colorizeSecondaryMetadata(secondary));
+  }
+  return parts.join(' ');
+}
+
+function isNonEmptyMetadataText(value: string | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function isDistanceWithinWindow(distance: number, scrollWindowBeats: number): boolean {
@@ -1859,6 +1890,10 @@ function colorizeMeasureLine(symbol: string): string {
 
 function colorizeMine(symbol: string): string {
   return colorizeText(symbol, MINE_FOREGROUND_RGB, MINE_BACKGROUND_RGB);
+}
+
+function colorizeSecondaryMetadata(value: string): string {
+  return colorizeText(value, SECONDARY_METADATA_RGB);
 }
 
 function colorizeLaneBackground(value: string, channel: string): string {
