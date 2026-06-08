@@ -35,10 +35,10 @@ type ImageFormat = 'bmp' | 'png' | 'jpeg' | 'video';
  * Composition mode for a BGA frame.
  *
  * - `'base'` — bottommost track. Every pixel renders, including pure black, since there's nothing visible behind it.
- * - `'layer'` — BMS-style overlay (`#xxx07`). Pure-black BMP / video pixels render transparent so the foreground
+ * - `'layer'` — BMS-style overlay (`#xxx07`). Pure-black BMP / JPEG / video pixels render transparent so the foreground
  *   composites over the base BGA, mirroring the BMS spec's chroma-key convention.
  * - `'bmson-layer'` — bmson 1.0.0 spec overlay. "Unlike BMS Layer Channel `#xxx07`, black pixels will not be made
- *   transparent." Honor the PNG alpha channel but render BMP / video black pixels as black, since bmson layer artwork
+ *   transparent." Honor the PNG alpha channel but render BMP / JPEG / video black pixels as black, since bmson layer artwork
  *   ships with a real alpha channel (or pre-multiplied composite intent).
  */
 type FrameMode = 'base' | 'layer' | 'bmson-layer';
@@ -2464,7 +2464,7 @@ function isOpaquePixel(r: number, g: number, b: number, a: number, format: Image
     }
     return true;
   }
-  if (format === 'bmp' || format === 'video') {
+  if (format === 'bmp' || format === 'jpeg' || format === 'video') {
     return !(r === 0 && g === 0 && b === 0);
   }
   if (format === 'png') {
