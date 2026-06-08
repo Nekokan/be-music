@@ -5,6 +5,7 @@ import { createEmptyJson } from '../../json/src/index.ts';
 import { describe, expect, test, vi } from 'vitest';
 import { encode as encodeBmp } from 'fast-bmp';
 import { encode as encodePng } from 'fast-png';
+import jpeg from 'jpeg-js';
 import {
   BgaAnsiRenderer,
   createBgaAnsiRenderer,
@@ -421,6 +422,38 @@ describe('player bga', () => {
 
       expect(pixels[10]?.[5]).toEqual({ r: 255, g: 0, b: 0 });
       expect(pixels[10]?.[30]).toEqual({ r: 0, g: 255, b: 0 });
+    } finally {
+      await rm(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  test('player bga: composites JPEG layer with black treated as transparent', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'be-music-bga-layer-jpeg-'));
+    try {
+      await writePng(join(baseDir, 'base.png'), 256, 256, () => ({ r: 255, g: 0, b: 0, a: 255 }));
+      await writeJpeg(join(baseDir, 'black-layer.jpg'), 256, 256, () => ({ r: 0, g: 0, b: 0, a: 255 }));
+
+      const json = createEmptyJson('bms');
+      json.metadata.bpm = 120;
+      json.resources.bmp['01'] = 'base.png';
+      json.resources.bmp['02'] = 'black-layer.jpg';
+      json.events = [
+        { measure: 0, channel: '04', position: [0, 1], value: '01' },
+        { measure: 0, channel: '07', position: [0, 1], value: '02' },
+      ];
+
+      const renderer = await createBgaAnsiRenderer(json, {
+        baseDir,
+        width: 40,
+        height: 20,
+      });
+      expect(renderer).toBeDefined();
+
+      const lines = renderer?.getAnsiLines(0);
+      expect(lines).toBeDefined();
+      const pixels = parseAnsiPixels(lines ?? []);
+
+      expect(pixels[10]?.[20]).toEqual({ r: 255, g: 0, b: 0 });
     } finally {
       await rm(baseDir, { recursive: true, force: true });
     }
@@ -1231,6 +1264,26 @@ describe('player bga', () => {
         bitsPerPixel: 32,
       }),
     );
+  }
+
+  async function writeJpeg(
+    path: string,
+    width: number,
+    height: number,
+    pixel: (x: number, y: number) => { r: number; g: number; b: number; a: number },
+  ): Promise<void> {
+    const data = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const value = pixel(x, y);
+        const offset = (y * width + x) * 4;
+        data[offset] = value.r;
+        data[offset + 1] = value.g;
+        data[offset + 2] = value.b;
+        data[offset + 3] = value.a;
+      }
+    }
+    await writeFile(path, jpeg.encode({ width, height, data }, 100).data);
   }
 
   async function writeIndexed4BitBmp(
