@@ -748,11 +748,94 @@ describe('player bga', () => {
     }
   });
 
-  test('player bga: returns after the first decoded video frame and only streams later frames after startStreaming', async () => {
+  test('player bga: returns after the first decoded MPEG-1 video frame and only streams later frames after startStreaming', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'be-music-bga-video-stream-'));
     let releaseRemainingFrames: (() => void) | undefined;
     try {
       await writeFile(join(baseDir, 'streaming.mp4'), '');
+      const initialDecodeCallCount = decodeVideoFramesStreamMock.mock.calls.length;
+      const initialWorkerDecodeCallCount = decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length;
+      decodeVideoFramesStreamMock.mockImplementationOnce(async (_videoPath, onFrame, _signal, options) => {
+        options?.onReady?.({
+          codecName: 'mpeg1video',
+          durationSeconds: 2.5,
+        });
+        onFrame({
+          seconds: 0,
+          width: 320,
+          height: 240,
+          rgba: createSolidVideoRgba(320, 240, { r: 255, g: 0, b: 0 }),
+        });
+        return {
+          codecName: 'mpeg1video',
+          frameCount: 1,
+          durationSeconds: 2.5,
+        };
+      });
+      decodeVideoFramesToSourceFramesInWorkerMock.mockImplementationOnce(
+        async (_videoPath, _mode, onFrame, _signal, options) => {
+          options?.onReady?.({
+            codecName: 'mpeg1video',
+            durationSeconds: 2.5,
+          });
+          onFrame({
+            seconds: 0,
+            width: 320,
+            height: 240,
+            ...createSolidSourceVideoFrame(320, 240, { r: 255, g: 0, b: 0 }),
+          });
+          await new Promise<void>((resolve) => {
+            releaseRemainingFrames = resolve;
+          });
+          onFrame({
+            seconds: 1,
+            width: 320,
+            height: 240,
+            ...createSolidSourceVideoFrame(320, 240, { r: 0, g: 255, b: 0 }),
+          });
+          return {
+            codecName: 'mpeg1video',
+            frameCount: 2,
+            durationSeconds: 2.5,
+          };
+        },
+      );
+
+      const json = createEmptyJson('bms');
+      json.metadata.bpm = 120;
+      json.resources.bmp['01'] = 'streaming.mp4';
+      json.events = [{ measure: 0, channel: '04', position: [1, 2], value: '01' }];
+
+      const rendererPromise = createBgaAnsiRenderer(json, {
+        baseDir,
+        width: 40,
+        height: 20,
+      });
+      const readyState = await resolvePromiseState(rendererPromise, 50);
+      expect(readyState).toBe('ready');
+
+      const renderer = await rendererPromise;
+      expect(renderer?.playbackEndSeconds).toBeCloseTo(3.5, 6);
+      expect(parseAnsiPixels(renderer?.getAnsiLines(1.1) ?? [])[10]?.[20]).toEqual({ r: 255, g: 0, b: 0 });
+      expect(decodeVideoFramesStreamMock.mock.calls.length - initialDecodeCallCount).toBe(1);
+
+      renderer?.startStreaming();
+      expect(decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length - initialWorkerDecodeCallCount).toBe(1);
+      releaseRemainingFrames?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(parseAnsiPixels(renderer?.getAnsiLines(2.1) ?? [])[10]?.[20]).toEqual({ r: 0, g: 255, b: 0 });
+    } finally {
+      releaseRemainingFrames?.();
+      await rm(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  test('player bga: waits for full H.264 video decode before playback', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'be-music-bga-video-h264-'));
+    let releaseRemainingFrames: (() => void) | undefined;
+    try {
+      await writeFile(join(baseDir, 'h264.mp4'), '');
       const initialDecodeCallCount = decodeVideoFramesStreamMock.mock.calls.length;
       const initialWorkerDecodeCallCount = decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length;
       decodeVideoFramesStreamMock.mockImplementationOnce(async (_videoPath, onFrame, _signal, options) => {
@@ -765,15 +848,6 @@ describe('player bga', () => {
           width: 320,
           height: 240,
           rgba: createSolidVideoRgba(320, 240, { r: 255, g: 0, b: 0 }),
-        });
-        await new Promise<void>((resolve) => {
-          releaseRemainingFrames = resolve;
-        });
-        onFrame({
-          seconds: 1,
-          width: 320,
-          height: 240,
-          rgba: createSolidVideoRgba(320, 240, { r: 0, g: 255, b: 0 }),
         });
         return {
           codecName: 'h264',
@@ -812,7 +886,7 @@ describe('player bga', () => {
 
       const json = createEmptyJson('bms');
       json.metadata.bpm = 120;
-      json.resources.bmp['01'] = 'streaming.mp4';
+      json.resources.bmp['01'] = 'h264.mp4';
       json.events = [{ measure: 0, channel: '04', position: [1, 2], value: '01' }];
 
       const rendererPromise = createBgaAnsiRenderer(json, {
@@ -820,19 +894,18 @@ describe('player bga', () => {
         width: 40,
         height: 20,
       });
+      for (let attempt = 0; attempt < 10 && !releaseRemainingFrames; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
       const readyState = await resolvePromiseState(rendererPromise, 50);
-      expect(readyState).toBe('ready');
+      expect(readyState).toBe('pending');
 
-      const renderer = await rendererPromise;
-      expect(renderer?.playbackEndSeconds).toBeCloseTo(3.5, 6);
-      expect(parseAnsiPixels(renderer?.getAnsiLines(1.1) ?? [])[10]?.[20]).toEqual({ r: 255, g: 0, b: 0 });
-      expect(decodeVideoFramesStreamMock.mock.calls.length - initialDecodeCallCount).toBe(1);
-
-      renderer?.startStreaming();
-      expect(decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length - initialWorkerDecodeCallCount).toBe(1);
       releaseRemainingFrames?.();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      const renderer = await rendererPromise;
 
+      expect(decodeVideoFramesStreamMock.mock.calls.length - initialDecodeCallCount).toBe(1);
+      expect(decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length - initialWorkerDecodeCallCount).toBe(1);
+      expect(renderer?.playbackEndSeconds).toBeCloseTo(3.5, 6);
       expect(parseAnsiPixels(renderer?.getAnsiLines(2.1) ?? [])[10]?.[20]).toEqual({ r: 0, g: 255, b: 0 });
     } finally {
       releaseRemainingFrames?.();

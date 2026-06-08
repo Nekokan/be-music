@@ -29,6 +29,7 @@ interface SeaTargetConfig {
   aliases?: Record<string, string>;
   workerAssets?: SeaWorkerAssetConfig[];
   nodeWebAudioAssets?: SeaNodeWebAudioAssetConfig;
+  libAvAssets?: SeaLibAvAssetConfig;
 }
 
 interface SeaWorkerAssetConfig {
@@ -41,6 +42,10 @@ interface SeaNodeWebAudioAssetConfig {
   assetPrefix: string;
 }
 
+interface SeaLibAvAssetConfig {
+  assetPrefix: string;
+}
+
 interface SeaAssetFile {
   packagePath: string;
   sourcePath: string;
@@ -50,6 +55,11 @@ interface PackageJson {
   dependencies?: Record<string, string>;
   name?: string;
   version?: string;
+}
+
+interface NodeRuntimeTarget {
+  arch: NodeJS.Architecture;
+  platform: NodeJS.Platform;
 }
 
 const TARGET_NAMES = ['player', 'audio-renderer'] as const;
@@ -111,6 +121,9 @@ const SEA_TARGETS: Record<SeaTargetName, SeaTargetConfig> = {
     ],
     nodeWebAudioAssets: {
       assetPrefix: '@be-music/player/sea-node-web-audio-api/',
+    },
+    libAvAssets: {
+      assetPrefix: '@be-music/player-tui/sea-libav-js-fat/',
     },
   },
   'audio-renderer': {
@@ -341,6 +354,7 @@ async function buildSeaWorkerAssets(
 async function buildSeaNodeWebAudioAssets(
   config: SeaTargetConfig,
   seaDir: string,
+  runtimeTarget: NodeRuntimeTarget,
 ): Promise<Record<string, string> | undefined> {
   if (!config.nodeWebAudioAssets) {
     return undefined;
@@ -348,7 +362,7 @@ async function buildSeaNodeWebAudioAssets(
 
   const packageEntry = requireFromScript.resolve('node-web-audio-api', { paths: [config.packageDir] });
   const packageDir = dirname(packageEntry);
-  const nativeFileName = getNodeWebAudioNativeFileName();
+  const nativeFileName = getNodeWebAudioNativeFileName(runtimeTarget.platform, runtimeTarget.arch);
   const assetFiles = [
     { packagePath: 'package.json', sourcePath: resolve(packageDir, 'package.json') },
     { packagePath: 'index.cjs', sourcePath: resolve(packageDir, 'index.cjs') },
@@ -363,6 +377,41 @@ async function buildSeaNodeWebAudioAssets(
 
   const assetPrefix = config.nodeWebAudioAssets.assetPrefix;
   const manifestPath = resolve(seaDir, 'node-web-audio-api-manifest.json');
+  const manifest = {
+    files: assetFiles.map((file) => ({
+      path: file.packagePath,
+      assetKey: `${assetPrefix}files/${file.packagePath}`,
+    })),
+  };
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+
+  const assets: Record<string, string> = {
+    [`${assetPrefix}manifest.json`]: manifestPath,
+  };
+  for (const file of assetFiles) {
+    assets[`${assetPrefix}files/${file.packagePath}`] = file.sourcePath;
+  }
+  return assets;
+}
+
+async function buildSeaLibAvAssets(
+  config: SeaTargetConfig,
+  seaDir: string,
+): Promise<Record<string, string> | undefined> {
+  if (!config.libAvAssets) {
+    return undefined;
+  }
+
+  const packageEntry = requireFromScript.resolve('@uwx/libav.js-fat', { paths: [config.packageDir] });
+  const packageJsonPath = await findPackageJsonForEntry('@uwx/libav.js-fat', packageEntry);
+  const packageDir = dirname(packageJsonPath);
+  const assetFiles = (await collectPackageFileNames(packageDir)).filter(isRuntimePackageFile).map((fileName) => ({
+    packagePath: fileName,
+    sourcePath: resolve(packageDir, fileName),
+  }));
+
+  const assetPrefix = config.libAvAssets.assetPrefix;
+  const manifestPath = resolve(seaDir, 'libav-js-fat-manifest.json');
   const manifest = {
     files: assetFiles.map((file) => ({
       path: file.packagePath,
@@ -489,9 +538,7 @@ async function collectPackageFileNames(dir: string): Promise<string[]> {
   return fileNames.sort();
 }
 
-function getNodeWebAudioNativeFileName(): string {
-  const platform = process.platform;
-  const arch = process.arch;
+function getNodeWebAudioNativeFileName(platform: NodeJS.Platform, arch: NodeJS.Architecture): string {
   if (platform === 'darwin') {
     if (arch === 'x64' || arch === 'arm64') {
       return `node-web-audio-api.darwin-${arch}.node`;
@@ -514,6 +561,22 @@ function getNodeWebAudioNativeFileName(): string {
     }
   }
   throw new Error(`node-web-audio-api does not provide a bundled native binary for ${platform}-${arch}`);
+}
+
+async function resolveNodeRuntimeTarget(nodeBinaryPath: string, cwd: string): Promise<NodeRuntimeTarget> {
+  const { stdout } = await execFileAsync(
+    nodeBinaryPath,
+    ['-p', 'JSON.stringify({ platform: process.platform, arch: process.arch })'],
+    { cwd },
+  );
+  const parsed = JSON.parse(stdout.trim()) as Partial<NodeRuntimeTarget>;
+  if (typeof parsed.platform !== 'string' || typeof parsed.arch !== 'string') {
+    throw new Error(`Unable to detect Node runtime target from ${nodeBinaryPath}`);
+  }
+  return {
+    platform: parsed.platform as NodeJS.Platform,
+    arch: parsed.arch as NodeJS.Architecture,
+  };
 }
 
 const LOCAL_CHUNK_REQUIRE_PATTERN = /require\((['"])(\.\/[^'"]+)\1\)/g;
@@ -682,14 +745,17 @@ async function main(): Promise<void> {
   const outputPath = toAbsolutePath(args.output) ?? resolve(seaDir, defaultOutputName);
 
   await mkdir(seaDir, { recursive: true });
+  const runtimeTarget = await resolveNodeRuntimeTarget(nodeBinaryPath, targetConfig.packageDir);
 
-  process.stdout.write('Building SEA bundle...\n');
+  process.stdout.write(`Building SEA bundle for ${runtimeTarget.platform}-${runtimeTarget.arch}...\n`);
   await buildSeaEntryBundle(targetConfig, seaDir);
   const workerAssets = await buildSeaWorkerAssets(targetConfig, seaDir);
-  const nodeWebAudioAssets = await buildSeaNodeWebAudioAssets(targetConfig, seaDir);
+  const nodeWebAudioAssets = await buildSeaNodeWebAudioAssets(targetConfig, seaDir, runtimeTarget);
+  const libAvAssets = await buildSeaLibAvAssets(targetConfig, seaDir);
   const assets = {
     ...(workerAssets ?? {}),
     ...(nodeWebAudioAssets ?? {}),
+    ...(libAvAssets ?? {}),
   };
   await inlineSeaRelativeChunks(seaDir, [
     'sea-entry.cjs',
@@ -702,7 +768,7 @@ async function main(): Promise<void> {
     output: outputPath,
     executable: nodeBinaryPath,
     disableExperimentalSEAWarning: true,
-    useCodeCache: true,
+    useCodeCache: runtimeTarget.arch === process.arch,
     ...(Object.keys(assets).length > 0 ? { assets } : {}),
   };
   await writeFile(configPath, `${JSON.stringify(seaConfig, null, 2)}\n`, 'utf8');

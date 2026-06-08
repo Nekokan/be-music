@@ -1,9 +1,14 @@
 import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { createAbortError, isAbortError, throwIfAborted } from '@be-music/utils/core';
-import { isSourceModuleUrl, resolveNodeWorkerUrl, SEA_WORKER_ASSETS } from './node/sea-worker-assets.ts';
+import {
+  isSourceModuleUrl,
+  resolveNodeWorkerUrl,
+  resolveSeaLibAvPackageDir,
+  SEA_WORKER_ASSETS,
+} from './node/sea-worker-assets.ts';
 
 const SUPPORTED_VIDEO_CODECS = new Set(['mpeg1video', 'h264', 'mjpeg']);
 // Keep chunks small so ff_decode_multi never allocates too many full-size frames at once.
@@ -76,7 +81,7 @@ interface LibAvInstance {
 }
 
 interface LibAvFactory {
-  LibAV(options?: { noworker?: boolean; variant?: string }): Promise<LibAvInstance>;
+  LibAV(options?: { base?: string; noworker?: boolean; variant?: string }): Promise<LibAvInstance>;
 }
 
 interface LibAvModule {
@@ -629,8 +634,12 @@ async function createLibAvInstance(): Promise<LibAvInstance> {
     (globalThis as { self?: unknown }).self = globalThis;
   }
 
-  const libAvModule = (await import('@uwx/libav.js-fat')) as unknown as LibAvModule;
+  const seaLibAvPackageDir = resolveSeaLibAvPackageDir();
+  const libAvModule = seaLibAvPackageDir
+    ? ((await import(pathToFileURL(join(seaLibAvPackageDir, 'dist/libav-fat.mjs')).href)) as unknown as LibAvModule)
+    : ((await import('@uwx/libav.js-fat')) as unknown as LibAvModule);
   return libAvModule.default.LibAV({
+    ...(seaLibAvPackageDir ? { base: pathToFileURL(join(seaLibAvPackageDir, 'dist')).href } : {}),
     noworker: true,
     variant: 'fat',
   });

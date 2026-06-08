@@ -12,7 +12,11 @@ import { buildBgaTimelines, pickActiveBgaCue, type BgaCue } from '@be-music/play
 import { decode as decodeBmpFast } from 'fast-bmp';
 import { decode as decodePngFast } from 'fast-png';
 import jpeg from 'jpeg-js';
-import { decodeVideoFramesStream, decodeVideoFramesToSourceFramesInWorker } from './bga-video.ts';
+import {
+  decodeVideoFramesStream,
+  decodeVideoFramesToSourceFramesInWorker,
+  type DecodedSourceVideoFrame,
+} from './bga-video.ts';
 import { DEFAULT_IMAGE_RESIZE_ALGORITHM, type ImageResizeAlgorithm } from '@be-music/player/image-resize-algorithm';
 
 const MAX_NORMAL_BGA_COMPOSITE_LAYERS = 3;
@@ -1431,6 +1435,17 @@ async function loadVideoAsFrameSource(
       frame: sourceFrame,
     });
   };
+  const appendSourceVideoFrame = (frame: DecodedSourceVideoFrame): void => {
+    frames.push({
+      seconds: frame.seconds,
+      frame: {
+        width: frame.width,
+        height: frame.height,
+        rgb: frame.rgb,
+        opaqueMask: frame.opaqueMask,
+      },
+    });
+  };
 
   if (!videoBgaStreaming) {
     const decoded = await decodeVideoFramesStream(
@@ -1452,7 +1467,8 @@ async function loadVideoAsFrameSource(
     return frames.length > 0 ? source : undefined;
   }
 
-  void decodeVideoFramesStream(
+  let codecName: 'mpeg1video' | 'h264' | 'mjpeg' | undefined;
+  const initialDecodePromise = decodeVideoFramesStream(
     videoPath,
     (frame) => {
       appendFrame(frame);
@@ -1461,6 +1477,7 @@ async function loadVideoAsFrameSource(
     signal,
     {
       onReady: (info) => {
+        codecName = info.codecName;
         source.durationSeconds = info.durationSeconds;
       },
       stopAfterFirstFrame: true,
@@ -1489,50 +1506,55 @@ async function loadVideoAsFrameSource(
     return undefined;
   }
 
+  const decodeRemainingFramesInWorker = async (): Promise<void> => {
+    let skipFrameCount = frames.length;
+    throwIfAborted(signal);
+    const decoded = await decodeVideoFramesToSourceFramesInWorker(
+      videoPath,
+      mode,
+      (frame) => {
+        if (skipFrameCount > 0) {
+          skipFrameCount -= 1;
+          return;
+        }
+        appendSourceVideoFrame(frame);
+      },
+      signal,
+      {
+        onReady: (info) => {
+          source.durationSeconds = info.durationSeconds;
+        },
+      },
+    );
+    if (decoded) {
+      source.durationSeconds = decoded.durationSeconds;
+    }
+  };
+
+  // libav.js H.264 decoding often cannot keep up with playback, so keep these videos synced by prebuffering.
+  if (codecName === 'h264') {
+    try {
+      await initialDecodePromise;
+      await decodeRemainingFramesInWorker();
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+    }
+    return source;
+  }
+
   let streamingStarted = false;
   source.ensureStreaming = () => {
     if (streamingStarted) {
       return;
     }
     streamingStarted = true;
-    void (async () => {
-      let skipFrameCount = frames.length;
-      try {
-        throwIfAborted(signal);
-        const decoded = await decodeVideoFramesToSourceFramesInWorker(
-          videoPath,
-          mode,
-          (frame) => {
-            if (skipFrameCount > 0) {
-              skipFrameCount -= 1;
-              return;
-            }
-            frames.push({
-              seconds: frame.seconds,
-              frame: {
-                width: frame.width,
-                height: frame.height,
-                rgb: frame.rgb,
-                opaqueMask: frame.opaqueMask,
-              },
-            });
-          },
-          signal,
-          {
-            onReady: (info) => {
-              source.durationSeconds = info.durationSeconds;
-            },
-          },
-        );
-        if (decoded) {
-          source.durationSeconds = decoded.durationSeconds;
-        }
-      } catch (error) {
-        if (isAbortError(error)) {
-          return;
-        }
+    void decodeRemainingFramesInWorker().catch((error) => {
+      if (isAbortError(error)) {
+        return;
       }
-    })();
+    });
   };
 
   return source;
