@@ -95,7 +95,9 @@ async function bootstrap(): Promise<void> {
     mode: initData.mode,
     laneDisplayMode: initData.laneDisplayMode,
     title: initData.json.metadata.title ?? 'Untitled',
+    subtitle: initData.json.metadata.subtitle,
     artist: initData.json.metadata.artist,
+    subartist: resolveTuiSubartist(initData.json),
     genre: initData.json.metadata.genre,
     player: initData.json.bms.player,
     rank: resolveDisplayedJudgeRankValue(initData.json),
@@ -387,6 +389,16 @@ function resolveSplitAfterIndex(bindings: NodeUiWorkerInitData['laneBindings']):
     }
   }
   return -1;
+}
+
+function resolveTuiSubartist(json: NodeUiWorkerInitData['json']): string | undefined {
+  if (Array.isArray(json.bmson.info.subartists) && json.bmson.info.subartists.length > 0) {
+    const subartists = json.bmson.info.subartists.map((value) => value.trim()).filter((value) => value.length > 0);
+    if (subartists.length > 0) {
+      return subartists.join(', ');
+    }
+  }
+  return json.metadata.extras.SUBARTIST;
 }
 
 function resolveTuiRenderMinIntervalMs(uiFps: number | undefined): number {
