@@ -17,7 +17,12 @@ import {
 import { decode as decodeBmpFast } from 'fast-bmp';
 import { decode as decodePngFast } from 'fast-png';
 import jpeg from 'jpeg-js';
-import { decodeVideoFramesStream, decodeVideoFramesToSourceFramesInWorker } from './bga-video.ts';
+import {
+  decodeVideoFramesStream,
+  decodeVideoFramesToSourceFramesInWorker,
+  type DecodedSourceVideoFrame,
+  type VideoCodecName,
+} from './bga-video.ts';
 import { DEFAULT_IMAGE_RESIZE_ALGORITHM, type ImageResizeAlgorithm } from '@be-music/player/image-resize-algorithm';
 
 const MAX_NORMAL_BGA_COMPOSITE_LAYERS = 3;
@@ -1456,7 +1461,8 @@ async function loadVideoAsFrameSource(
     return frames.length > 0 ? source : undefined;
   }
 
-  void decodeVideoFramesStream(
+  let codecName: VideoCodecName | undefined;
+  const initialDecodePromise = decodeVideoFramesStream(
     videoPath,
     (frame) => {
       appendFrame(frame);
@@ -1491,6 +1497,44 @@ async function loadVideoAsFrameSource(
   throwIfAborted(signal);
   if (!hasFirstFrame) {
     return undefined;
+  }
+
+  const decodeRemainingFramesInWorker = async (): Promise<void> => {
+    let skipFrameCount = frames.length;
+    throwIfAborted(signal);
+    const decoded = await decodeVideoFramesToSourceFramesInWorker(
+      videoPath,
+      mode,
+      (frame) => {
+        if (skipFrameCount > 0) {
+          skipFrameCount -= 1;
+          return;
+        }
+        appendSourceVideoFrame(frame);
+      },
+      signal,
+      {
+        onReady: (info) => {
+          source.durationSeconds = info.durationSeconds;
+        },
+      },
+    );
+    if (decoded) {
+      source.durationSeconds = decoded.durationSeconds;
+    }
+  };
+
+  // Some inter-frame codecs cannot keep up with playback in libav.js, so keep these videos synced by prebuffering.
+  if (shouldPrebufferVideoCodec(codecName)) {
+    try {
+      await initialDecodePromise;
+      await decodeRemainingFramesInWorker();
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+    }
+    return source;
   }
 
   let streamingStarted = false;
@@ -1540,6 +1584,21 @@ async function loadVideoAsFrameSource(
   };
 
   return source;
+}
+
+function shouldPrebufferVideoCodec(codecName: VideoCodecName | undefined): boolean {
+  return (
+    codecName === 'h264' ||
+    codecName === 'wmv1' ||
+    codecName === 'wmv2' ||
+    codecName === 'wmv3' ||
+    codecName === 'wmv3image' ||
+    codecName === 'vc1' ||
+    codecName === 'vc1image' ||
+    codecName === 'msmpeg4v1' ||
+    codecName === 'msmpeg4v2' ||
+    codecName === 'msmpeg4v3'
+  );
 }
 
 async function loadTerminalImageSourceFrame(
