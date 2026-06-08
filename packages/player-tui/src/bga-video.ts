@@ -10,7 +10,34 @@ import {
   SEA_WORKER_ASSETS,
 } from './node/sea-worker-assets.ts';
 
-const SUPPORTED_VIDEO_CODECS = new Set(['mpeg1video', 'h264', 'mjpeg']);
+export type VideoCodecName =
+  | 'mpeg1video'
+  | 'h264'
+  | 'mjpeg'
+  | 'wmv1'
+  | 'wmv2'
+  | 'wmv3'
+  | 'wmv3image'
+  | 'vc1'
+  | 'vc1image'
+  | 'msmpeg4v1'
+  | 'msmpeg4v2'
+  | 'msmpeg4v3';
+
+const SUPPORTED_VIDEO_CODECS = new Set<VideoCodecName>([
+  'mpeg1video',
+  'h264',
+  'mjpeg',
+  'wmv1',
+  'wmv2',
+  'wmv3',
+  'wmv3image',
+  'vc1',
+  'vc1image',
+  'msmpeg4v1',
+  'msmpeg4v2',
+  'msmpeg4v3',
+]);
 // Keep chunks small so ff_decode_multi never allocates too many full-size frames at once.
 const PACKET_READ_CHUNK_BYTES = 65_536;
 const MAX_PACKET_READ_ITERATIONS = 16_384;
@@ -96,7 +123,7 @@ export interface DecodedVideoFrame {
 }
 
 export interface DecodedVideoStreamInfo {
-  codecName: 'mpeg1video' | 'h264' | 'mjpeg';
+  codecName: VideoCodecName;
   durationSeconds?: number;
 }
 
@@ -126,7 +153,7 @@ interface VideoDecodeWorkerFrameMessage {
 
 interface VideoDecodeWorkerDoneMessage {
   kind: 'done';
-  result?: { codecName: 'mpeg1video' | 'h264' | 'mjpeg'; frameCount: number; durationSeconds?: number };
+  result?: { codecName: VideoCodecName; frameCount: number; durationSeconds?: number };
 }
 
 interface VideoDecodeWorkerErrorMessage {
@@ -149,7 +176,7 @@ export async function decodeVideoFramesStream(
     onReady?: (info: DecodedVideoStreamInfo) => void;
     stopAfterFirstFrame?: boolean;
   } = {},
-): Promise<{ codecName: 'mpeg1video' | 'h264' | 'mjpeg'; frameCount: number; durationSeconds?: number } | undefined> {
+): Promise<{ codecName: VideoCodecName; frameCount: number; durationSeconds?: number } | undefined> {
   return await decodeVideoFramesStreamDirect(videoPath, onFrame, signal, options);
 }
 
@@ -161,7 +188,7 @@ export async function decodeVideoFramesStreamDirect(
     onReady?: (info: DecodedVideoStreamInfo) => void;
     stopAfterFirstFrame?: boolean;
   } = {},
-): Promise<{ codecName: 'mpeg1video' | 'h264' | 'mjpeg'; frameCount: number; durationSeconds?: number } | undefined> {
+): Promise<{ codecName: VideoCodecName; frameCount: number; durationSeconds?: number } | undefined> {
   let libav: LibAvInstance | undefined;
   try {
     throwIfAborted(signal);
@@ -236,7 +263,7 @@ export async function decodeVideoFramesToSourceFramesInWorker(
     onReady?: (info: DecodedVideoStreamInfo) => void;
     stopAfterFirstFrame?: boolean;
   } = {},
-): Promise<{ codecName: 'mpeg1video' | 'h264' | 'mjpeg'; frameCount: number; durationSeconds?: number } | undefined> {
+): Promise<{ codecName: VideoCodecName; frameCount: number; durationSeconds?: number } | undefined> {
   throwIfAborted(signal);
   const worker = new Worker(resolveBgaVideoWorkerUrl(), {
     workerData: {
@@ -306,8 +333,8 @@ export async function decodeVideoFramesToSourceFramesInWorker(
   });
 }
 
-function isSupportedVideoCodec(codecName: string): codecName is 'mpeg1video' | 'h264' | 'mjpeg' {
-  return SUPPORTED_VIDEO_CODECS.has(codecName);
+function isSupportedVideoCodec(codecName: string): codecName is VideoCodecName {
+  return SUPPORTED_VIDEO_CODECS.has(codecName as VideoCodecName);
 }
 
 async function decodeVideoFramesWithCallback(

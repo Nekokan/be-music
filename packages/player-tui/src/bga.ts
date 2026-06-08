@@ -16,6 +16,7 @@ import {
   decodeVideoFramesStream,
   decodeVideoFramesToSourceFramesInWorker,
   type DecodedSourceVideoFrame,
+  type VideoCodecName,
 } from './bga-video.ts';
 import { DEFAULT_IMAGE_RESIZE_ALGORITHM, type ImageResizeAlgorithm } from '@be-music/player/image-resize-algorithm';
 
@@ -1467,7 +1468,7 @@ async function loadVideoAsFrameSource(
     return frames.length > 0 ? source : undefined;
   }
 
-  let codecName: 'mpeg1video' | 'h264' | 'mjpeg' | undefined;
+  let codecName: VideoCodecName | undefined;
   const initialDecodePromise = decodeVideoFramesStream(
     videoPath,
     (frame) => {
@@ -1531,8 +1532,8 @@ async function loadVideoAsFrameSource(
     }
   };
 
-  // libav.js H.264 decoding often cannot keep up with playback, so keep these videos synced by prebuffering.
-  if (codecName === 'h264') {
+  // Some inter-frame codecs cannot keep up with playback in libav.js, so keep these videos synced by prebuffering.
+  if (shouldPrebufferVideoCodec(codecName)) {
     try {
       await initialDecodePromise;
       await decodeRemainingFramesInWorker();
@@ -1558,6 +1559,21 @@ async function loadVideoAsFrameSource(
   };
 
   return source;
+}
+
+function shouldPrebufferVideoCodec(codecName: VideoCodecName | undefined): boolean {
+  return (
+    codecName === 'h264' ||
+    codecName === 'wmv1' ||
+    codecName === 'wmv2' ||
+    codecName === 'wmv3' ||
+    codecName === 'wmv3image' ||
+    codecName === 'vc1' ||
+    codecName === 'vc1image' ||
+    codecName === 'msmpeg4v1' ||
+    codecName === 'msmpeg4v2' ||
+    codecName === 'msmpeg4v3'
+  );
 }
 
 async function loadTerminalImageSourceFrame(
