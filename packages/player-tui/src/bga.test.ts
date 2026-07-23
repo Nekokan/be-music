@@ -761,7 +761,7 @@ describe('player bga', () => {
       const initialWorkerDecodeCallCount = decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length;
       decodeVideoFramesStreamMock.mockImplementationOnce(async (_videoPath, onFrame, _signal, options) => {
         options?.onReady?.({
-          codecName: 'h264',
+          codecName: 'mpeg1video',
           durationSeconds: 2.5,
         });
         onFrame({
@@ -780,7 +780,7 @@ describe('player bga', () => {
           rgba: createSolidVideoRgba(320, 240, { r: 0, g: 255, b: 0 }),
         });
         return {
-          codecName: 'h264',
+          codecName: 'mpeg1video',
           frameCount: 1,
           durationSeconds: 2.5,
         };
@@ -788,7 +788,7 @@ describe('player bga', () => {
       decodeVideoFramesToSourceFramesInWorkerMock.mockImplementationOnce(
         async (_videoPath, _mode, onFrame, _signal, options) => {
           options?.onReady?.({
-            codecName: 'h264',
+            codecName: 'mpeg1video',
             durationSeconds: 2.5,
           });
           onFrame({
@@ -807,7 +807,7 @@ describe('player bga', () => {
             ...createSolidSourceVideoFrame(320, 240, { r: 0, g: 255, b: 0 }),
           });
           return {
-            codecName: 'h264',
+            codecName: 'mpeg1video',
             frameCount: 2,
             durationSeconds: 2.5,
           };

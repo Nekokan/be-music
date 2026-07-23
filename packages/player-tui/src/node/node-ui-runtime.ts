@@ -278,6 +278,7 @@ function postWorkerMessageAndWaitForAck(
 }
 
 function createWorkerInitData(options: NodeUiRuntimeOptions): NodeUiWorkerInitData {
+  const initialFrame = options.initialFrame ?? options.uiSignals?.getFrame();
   return {
     json: options.json,
     mode: options.mode,
@@ -294,7 +295,7 @@ function createWorkerInitData(options: NodeUiRuntimeOptions): NodeUiWorkerInitDa
     randomPatternSummary: options.randomPatternSummary,
     baseDir: options.baseDir,
     kittyGraphics: options.kittyGraphics,
-    videoBgaStreaming: options.videoBgaStreaming,
+    videoBgaStreaming: resolveInitialVideoBgaStreaming(options.videoBgaStreaming, initialFrame),
     useAlternateScreen: shouldUseAlternateScreen(process.platform),
     stdinIsTTY: Boolean(process.stdin.isTTY),
     stdoutIsTTY: Boolean(process.stdout.isTTY),
@@ -306,6 +307,19 @@ function createWorkerInitData(options: NodeUiRuntimeOptions): NodeUiWorkerInitDa
         updatedAtMs: 0,
       },
   };
+}
+
+function resolveInitialVideoBgaStreaming(
+  videoBgaStreaming: boolean | undefined,
+  initialFrame: ReturnType<PlayerUiSignalBus['getFrame']> | undefined,
+): boolean | undefined {
+  if (videoBgaStreaming === false) {
+    return false;
+  }
+  if (typeof initialFrame?.currentSeconds === 'number' && initialFrame.currentSeconds > 0) {
+    return false;
+  }
+  return videoBgaStreaming;
 }
 
 function shouldUseAlternateScreen(platform: NodeJS.Platform): boolean {

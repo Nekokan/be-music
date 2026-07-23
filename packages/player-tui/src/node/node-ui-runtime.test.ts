@@ -252,6 +252,16 @@ describe('node ui runtime', () => {
     await runtime.dispose();
   });
 
+  test('prebuffers video BGA when the initial frame starts after the chart beginning', async () => {
+    const uiSignals = createPlayerUiSignalBus(createFrame({ currentSeconds: 12.5 }));
+    const runtime = await createNodeUiRuntime(createContext(uiSignals));
+    const workerData = workerState.lastWorkerOptions?.workerData as { videoBgaStreaming?: boolean } | undefined;
+
+    expect(workerData?.videoBgaStreaming).toBe(false);
+
+    await runtime.dispose();
+  });
+
   test('disables alternate screen for Windows worker init', async () => {
     const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const uiSignals = createPlayerUiSignalBus(createFrame());

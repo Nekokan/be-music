@@ -613,11 +613,11 @@ describe('player', () => {
 
   test('player: startMeasure keeps already-playing audio alive with a seek offset', async () => {
     const json = createEmptyJson('bms');
-    json.metadata.bpm = 4800;
+    json.metadata.bpm = 1200;
     json.resources.wav['01'] = 'not-found.wav';
     json.events = [
       { measure: 0, channel: '01', position: [0, 1] as const, value: '01' },
-      { measure: 2, channel: '11', position: [0, 1] as const, value: '02' },
+      { measure: 4, channel: '11', position: [0, 1] as const, value: '02' },
     ];
 
     await autoPlay(json, {
@@ -629,6 +629,7 @@ describe('player', () => {
       audioHeadPaddingMs: 0,
       audioLeadMs: 0,
       audioLeadMaxMs: 0,
+      missingSampleToneSeconds: 1,
       limiter: false,
       tui: false,
       writeOutput: () => undefined,

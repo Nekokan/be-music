@@ -1441,6 +1441,19 @@ async function loadVideoAsFrameSource(
     });
   };
 
+  const appendSourceVideoFrame = (frame: DecodedSourceVideoFrame): void => {
+    throwIfAborted(signal);
+    frames.push({
+      seconds: frame.seconds,
+      frame: {
+        width: frame.width,
+        height: frame.height,
+        rgb: frame.rgb,
+        opaqueMask: frame.opaqueMask,
+      },
+    });
+  };
+
   if (!videoBgaStreaming) {
     const decoded = await decodeVideoFramesStream(
       videoPath,
@@ -1471,6 +1484,7 @@ async function loadVideoAsFrameSource(
     signal,
     {
       onReady: (info) => {
+        codecName = info.codecName;
         source.durationSeconds = info.durationSeconds;
       },
       stopAfterFirstFrame: true,
@@ -1478,6 +1492,7 @@ async function loadVideoAsFrameSource(
   )
     .then((decoded) => {
       if (decoded) {
+        codecName = decoded.codecName;
         source.durationSeconds = decoded.durationSeconds;
       }
       settleHasFirstFrame(frames.length > 0);
@@ -1555,15 +1570,7 @@ async function loadVideoAsFrameSource(
               skipFrameCount -= 1;
               return;
             }
-            frames.push({
-              seconds: frame.seconds,
-              frame: {
-                width: frame.width,
-                height: frame.height,
-                rgb: frame.rgb,
-                opaqueMask: frame.opaqueMask,
-              },
-            });
+            appendSourceVideoFrame(frame);
           },
           signal,
           {

@@ -22,7 +22,12 @@ const basename = (path: string): string => {
   return lastSep === -1 ? trimmed : trimmed.slice(lastSep + 1);
 };
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-import { findFirstIndexNumberAtOrAfter, floatToInt16, throwIfAborted } from '@be-music/utils/core';
+import {
+  findFirstIndexAtOrAfter,
+  findFirstIndexNumberAtOrAfter,
+  floatToInt16,
+  throwIfAborted,
+} from '@be-music/utils/core';
 import type { LogEntry, LogLevel } from '@be-music/utils/log';
 import {
   type BeMusicEvent,
@@ -2431,8 +2436,8 @@ export async function manualPlay(json: BeMusicJson, options: PlayerOptions = {})
   const remainingInvisibleCount = markNotesBeforePlaybackStart(invisibleNotes, playbackStartSeconds);
   const playbackStartJudgeRankCursor = findFirstIndexAtOrAfterSeconds(dynamicJudgeRankChanges, playbackStartSeconds);
   if (playbackStartJudgeRankCursor > 0) {
-    judgeWindows = resolveBmsJudgeWindowsMsForPercent(
-      dynamicJudgeRankChanges[playbackStartJudgeRankCursor - 1]!.rankPercent,
+    judgeWindows = resolveBmsJudgeWindowsMsForExRankValue(
+      dynamicJudgeRankChanges[playbackStartJudgeRankCursor - 1]!.exRankValue,
       options.judgeWindowMs,
     );
     badWindowMs = judgeWindows.bad;

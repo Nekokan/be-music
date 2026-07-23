@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { build, defaultServerConditions, defaultServerMainFields } from 'vite';
 
 const execFileAsync = promisify(execFile);
+const NODE_SEA_FUSE_SENTINEL = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
 
 const SEA_WORKER_BANNER = [
   "globalThis.Worker ??= (() => { try { return require('node:worker_threads').Worker; } catch { return undefined; } })();",
@@ -277,8 +278,10 @@ async function buildSeaBundle(config: SeaTargetConfig, seaDir: string): Promise<
       ...(config.aliases ? { alias: config.aliases } : {}),
       // The SEA bundle runs in Node, but `build()` uses the client environment whose default conditions and
       // main fields prefer `browser` entries. That silently swapped in pino/browser (whose `flush` is a noop,
-      // hanging the logger close and writing no NDJSON) and isoworker's Web Worker implementation.
-      conditions: [...defaultServerConditions],
+      // hanging the logger close and writing no NDJSON) and isoworker's Web Worker implementation. Keep the
+      // workspace `source` condition first so SEA builds include the current TypeScript sources instead of
+      // stale package dist files.
+      conditions: ['source', ...defaultServerConditions],
       mainFields: [...defaultServerMainFields],
     },
     build: {
@@ -505,6 +508,58 @@ async function runSeaBuild(nodeBinaryPath: string, cwd: string, configFilePath: 
   }
 }
 
+async function prepareSeaExecutableTemplate(nodeBinaryPath: string, seaDir: string): Promise<string> {
+  const sentinelCount = await countBinaryOccurrences(nodeBinaryPath, NODE_SEA_FUSE_SENTINEL);
+  if (sentinelCount <= 1) {
+    return nodeBinaryPath;
+  }
+  if (process.platform !== 'darwin') {
+    return nodeBinaryPath;
+  }
+
+  const arch = resolveDarwinLipoArch(process.arch);
+  if (!arch) {
+    return nodeBinaryPath;
+  }
+
+  const thinnedNodePath = resolve(seaDir, `node-${arch}`);
+  await execFileAsync('lipo', [nodeBinaryPath, '-thin', arch, '-output', thinnedNodePath]);
+  const thinnedSentinelCount = await countBinaryOccurrences(thinnedNodePath, NODE_SEA_FUSE_SENTINEL);
+  if (thinnedSentinelCount !== 1) {
+    throw new Error(
+      `Failed to prepare a SEA executable template: expected one ${NODE_SEA_FUSE_SENTINEL} sentinel in ` +
+        `${thinnedNodePath}, found ${thinnedSentinelCount}.`,
+    );
+  }
+  return thinnedNodePath;
+}
+
+function resolveDarwinLipoArch(arch: NodeJS.Architecture): string | undefined {
+  if (arch === 'arm64') {
+    return 'arm64';
+  }
+  if (arch === 'x64') {
+    return 'x86_64';
+  }
+  return undefined;
+}
+
+async function countBinaryOccurrences(filePath: string, needle: string): Promise<number> {
+  const content = await readFile(filePath);
+  const pattern = Buffer.from(needle);
+  let count = 0;
+  let offset = 0;
+  while (offset < content.length) {
+    const index = content.indexOf(pattern, offset);
+    if (index === -1) {
+      break;
+    }
+    count += 1;
+    offset = index + pattern.length;
+  }
+  return count;
+}
+
 async function maybeAdhocSignMacBinary(cwd: string, pathValue: string): Promise<void> {
   if (process.platform !== 'darwin') {
     return;
@@ -548,6 +603,7 @@ async function main(): Promise<void> {
     await writeFile(embeddedManifestPath, `${JSON.stringify(embeddedModules.manifest, null, 2)}\n`, 'utf8');
   }
 
+  const seaExecutablePath = await prepareSeaExecutableTemplate(nodeBinaryPath, seaDir);
   const assets: Record<string, string> = {
     // Asset name kept in sync with SEA_BUNDLE_ASSET_NAME in packages/player-tui/src/node/sea-worker.ts.
     ...(targetConfig.embedBundleAsset ? { 'sea-entry.cjs': bundlePath } : {}),
@@ -557,7 +613,7 @@ async function main(): Promise<void> {
     main: bundlePath,
     mainFormat: 'commonjs',
     output: outputPath,
-    executable: nodeBinaryPath,
+    executable: seaExecutablePath,
     disableExperimentalSEAWarning: true,
     useCodeCache: true,
     ...(Object.keys(assets).length > 0 ? { assets } : {}),
