@@ -496,6 +496,37 @@ describe('player bga', () => {
     }
   });
 
+  test('player bga: decodes RLE8 indexed bmp layers', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'be-music-bga-layer-rle8-'));
+    try {
+      await writePng(join(baseDir, 'base.png'), 256, 256, () => ({ r: 255, g: 0, b: 0, a: 255 }));
+      await writeIndexed8BitRleBmp(join(baseDir, 'layer-rle8.bmp'), 256, 256, (x) => (x < 128 ? 0 : 1));
+
+      const json = createEmptyJson('bms');
+      json.metadata.bpm = 120;
+      json.resources.bmp['01'] = 'base.png';
+      json.resources.bmp['02'] = 'layer-rle8.bmp';
+      json.events = [
+        { measure: 0, channel: '04', position: [0, 1], value: '01' },
+        { measure: 0, channel: '07', position: [0, 1], value: '02' },
+      ];
+
+      const renderer = await createBgaAnsiRenderer(json, {
+        baseDir,
+        width: 40,
+        height: 20,
+      });
+      expect(renderer).toBeDefined();
+
+      const pixels = parseAnsiPixels(renderer?.getAnsiLines(0) ?? []);
+
+      expect(pixels[10]?.[5]).toEqual({ r: 255, g: 0, b: 0 });
+      expect(pixels[10]?.[30]).toEqual({ r: 0, g: 255, b: 0 });
+    } finally {
+      await rm(baseDir, { recursive: true, force: true });
+    }
+  });
+
   test('player bga: composites channel 0A above channel 07', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'be-music-bga-layer2-'));
     try {
@@ -1509,6 +1540,69 @@ describe('player bga', () => {
       }
     }
 
+    await writeFile(path, data);
+  }
+
+  async function writeIndexed8BitRleBmp(
+    path: string,
+    width: number,
+    height: number,
+    pixel: (x: number, y: number) => number,
+  ): Promise<void> {
+    const rleBytes: number[] = [];
+    for (let row = 0; row < height; row += 1) {
+      const sourceY = height - 1 - row;
+      let x = 0;
+      while (x < width) {
+        const value = pixel(x, sourceY) & 0xff;
+        let count = 1;
+        while (x + count < width && count < 255 && (pixel(x + count, sourceY) & 0xff) === value) {
+          count += 1;
+        }
+        rleBytes.push(count, value);
+        x += count;
+      }
+      rleBytes.push(0, 0);
+    }
+    rleBytes.push(0, 1);
+
+    const imageSize = rleBytes.length;
+    const paletteEntryCount = 256;
+    const paletteSize = paletteEntryCount * 4;
+    const pixelDataOffset = 14 + 40 + paletteSize;
+    const fileSize = pixelDataOffset + imageSize;
+    const data = new Uint8Array(fileSize);
+    const view = new DataView(data.buffer);
+
+    data[0] = 0x42;
+    data[1] = 0x4d;
+    view.setUint32(2, fileSize, true);
+    view.setUint32(10, pixelDataOffset, true);
+    view.setUint32(14, 40, true);
+    view.setInt32(18, width, true);
+    view.setInt32(22, height, true);
+    view.setUint16(26, 1, true);
+    view.setUint16(28, 8, true);
+    view.setUint32(30, 1, true);
+    view.setUint32(34, imageSize, true);
+    view.setInt32(38, 2835, true);
+    view.setInt32(42, 2835, true);
+    view.setUint32(46, paletteEntryCount, true);
+    view.setUint32(50, paletteEntryCount, true);
+
+    const paletteOffset = 14 + 40;
+    // Palette index 0: black (transparent key for layer BMP)
+    data[paletteOffset] = 0;
+    data[paletteOffset + 1] = 0;
+    data[paletteOffset + 2] = 0;
+    data[paletteOffset + 3] = 0;
+    // Palette index 1: green
+    data[paletteOffset + 4] = 0;
+    data[paletteOffset + 5] = 255;
+    data[paletteOffset + 6] = 0;
+    data[paletteOffset + 7] = 0;
+
+    data.set(rleBytes, pixelDataOffset);
     await writeFile(path, data);
   }
 

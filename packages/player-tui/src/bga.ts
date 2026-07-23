@@ -36,6 +36,8 @@ const SPEC_BGA_CANVAS_SIZE = 256;
 const TERMINAL_PIXEL_ASPECT_X = 2;
 const TERMINAL_PIXEL_ASPECT_Y = 1;
 const BGA_SOURCE_LOAD_CONCURRENCY = Math.max(1, Math.min(8, availableParallelism()));
+const BMP_COMPRESSION_RGB = 0;
+const BMP_COMPRESSION_RLE8 = 1;
 const lanczosAxisContributionCache = new Map<string, LanczosAxisContribution[]>();
 const resizedAnsiFrameCache = new WeakMap<AnsiFrame, Map<string, AnsiFrame>>();
 
@@ -1857,20 +1859,49 @@ function decodeIndexedBmp(buffer: Buffer, bitsPerPixel: number): DecodedImage {
     throw new Error('bmp palette not found');
   }
 
+  const compression = dibHeaderSize >= 40 ? buffer.readUInt32LE(30) : BMP_COMPRESSION_RGB;
+  if (compression === BMP_COMPRESSION_RLE8) {
+    if (bitsPerPixel !== 8) {
+      throw new Error(`unsupported RLE8 bmp bit depth: ${bitsPerPixel}`);
+    }
+    return createIndexedBmpImage(
+      width,
+      height,
+      palette,
+      decodeBmpRle8PaletteIndices(buffer, pixelDataOffset, width, height, topDown),
+    );
+  }
+  if (compression !== BMP_COMPRESSION_RGB) {
+    throw new Error(`unsupported indexed bmp compression: ${compression}`);
+  }
+
   const rowStride = Math.floor((bitsPerPixel * width + 31) / 32) * 4;
-  const rgba = new Uint8Array(width * height * 4);
+  const paletteIndices = new Uint8Array(width * height);
   for (let y = 0; y < height; y += 1) {
     const sourceY = topDown ? y : height - 1 - y;
     const rowOffset = pixelDataOffset + sourceY * rowStride;
     for (let x = 0; x < width; x += 1) {
-      const paletteIndex = readIndexedBmpPaletteIndex(buffer, rowOffset, x, bitsPerPixel);
-      const color = palette[paletteIndex] ?? [0, 0, 0, 255];
-      const targetOffset = (y * width + x) * 4;
-      rgba[targetOffset] = color[0];
-      rgba[targetOffset + 1] = color[1];
-      rgba[targetOffset + 2] = color[2];
-      rgba[targetOffset + 3] = color[3];
+      paletteIndices[y * width + x] = readIndexedBmpPaletteIndex(buffer, rowOffset, x, bitsPerPixel);
     }
+  }
+
+  return createIndexedBmpImage(width, height, palette, paletteIndices);
+}
+
+function createIndexedBmpImage(
+  width: number,
+  height: number,
+  palette: Array<[r: number, g: number, b: number, a: number]>,
+  paletteIndices: Uint8Array,
+): DecodedImage {
+  const rgba = new Uint8Array(width * height * 4);
+  for (let pixelIndex = 0; pixelIndex < width * height; pixelIndex += 1) {
+    const color = palette[paletteIndices[pixelIndex] ?? 0] ?? [0, 0, 0, 255];
+    const targetOffset = pixelIndex * 4;
+    rgba[targetOffset] = color[0];
+    rgba[targetOffset + 1] = color[1];
+    rgba[targetOffset + 2] = color[2];
+    rgba[targetOffset + 3] = color[3];
   }
 
   return {
@@ -1879,6 +1910,68 @@ function decodeIndexedBmp(buffer: Buffer, bitsPerPixel: number): DecodedImage {
     data: rgba,
     format: 'bmp',
   };
+}
+
+function decodeBmpRle8PaletteIndices(
+  buffer: Buffer,
+  pixelDataOffset: number,
+  width: number,
+  height: number,
+  topDown: boolean,
+): Uint8Array {
+  const paletteIndices = new Uint8Array(width * height);
+  let offset = pixelDataOffset;
+  let x = 0;
+  let encodedY = 0;
+
+  const writePaletteIndex = (paletteIndex: number): void => {
+    if (x >= 0 && x < width && encodedY >= 0 && encodedY < height) {
+      const targetY = topDown ? encodedY : height - 1 - encodedY;
+      paletteIndices[targetY * width + x] = paletteIndex;
+    }
+    x += 1;
+  };
+
+  while (offset + 1 < buffer.length && encodedY < height) {
+    const count = buffer[offset] ?? 0;
+    const value = buffer[offset + 1] ?? 0;
+    offset += 2;
+
+    if (count > 0) {
+      for (let index = 0; index < count; index += 1) {
+        writePaletteIndex(value);
+      }
+      continue;
+    }
+
+    if (value === 0) {
+      x = 0;
+      encodedY += 1;
+      continue;
+    }
+    if (value === 1) {
+      break;
+    }
+    if (value === 2) {
+      if (offset + 1 >= buffer.length) {
+        break;
+      }
+      x += buffer[offset] ?? 0;
+      encodedY += buffer[offset + 1] ?? 0;
+      offset += 2;
+      continue;
+    }
+
+    for (let index = 0; index < value && offset < buffer.length; index += 1) {
+      writePaletteIndex(buffer[offset] ?? 0);
+      offset += 1;
+    }
+    if (value % 2 === 1) {
+      offset += 1;
+    }
+  }
+
+  return paletteIndices;
 }
 
 function readIndexedBmpPaletteIndex(buffer: Buffer, rowOffset: number, x: number, bitsPerPixel: number): number {
