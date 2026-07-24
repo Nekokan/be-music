@@ -1541,7 +1541,7 @@ async function loadVideoAsFrameSource(
     }
   };
 
-  // Some inter-frame codecs cannot keep up with playback in libav.js, so keep these videos synced by prebuffering.
+  // H.264 cannot reliably keep up with playback in libav.js, so keep these videos synced by prebuffering.
   if (shouldPrebufferVideoCodec(codecName)) {
     try {
       await initialDecodePromise;
@@ -1596,18 +1596,7 @@ async function loadVideoAsFrameSource(
 }
 
 function shouldPrebufferVideoCodec(codecName: VideoCodecName | undefined): boolean {
-  return (
-    codecName === 'h264' ||
-    codecName === 'wmv1' ||
-    codecName === 'wmv2' ||
-    codecName === 'wmv3' ||
-    codecName === 'wmv3image' ||
-    codecName === 'vc1' ||
-    codecName === 'vc1image' ||
-    codecName === 'msmpeg4v1' ||
-    codecName === 'msmpeg4v2' ||
-    codecName === 'msmpeg4v3'
-  );
+  return codecName === 'h264';
 }
 
 async function loadTerminalImageSourceFrame(

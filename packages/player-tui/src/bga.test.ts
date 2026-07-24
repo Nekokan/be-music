@@ -957,7 +957,7 @@ describe('player bga', () => {
     }
   });
 
-  test('player bga: waits for full WMV video decode before playback', async () => {
+  test('player bga: streams WMV video BGA without waiting for full decode before playback', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'be-music-bga-video-wmv-'));
     let releaseRemainingFrames: (() => void) | undefined;
     try {
@@ -1020,17 +1020,24 @@ describe('player bga', () => {
         width: 40,
         height: 20,
       });
-      for (let attempt = 0; attempt < 10 && !releaseRemainingFrames; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
       const readyState = await resolvePromiseState(rendererPromise, 50);
-      expect(readyState).toBe('pending');
+      expect(readyState).toBe('ready');
 
-      releaseRemainingFrames?.();
       const renderer = await rendererPromise;
 
       expect(decodeVideoFramesStreamMock.mock.calls.length - initialDecodeCallCount).toBe(1);
+      expect(decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length - initialWorkerDecodeCallCount).toBe(0);
+
+      renderer?.startStreaming();
+      for (let attempt = 0; attempt < 10 && !releaseRemainingFrames; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
       expect(decodeVideoFramesToSourceFramesInWorkerMock.mock.calls.length - initialWorkerDecodeCallCount).toBe(1);
+
+      releaseRemainingFrames?.();
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
       expect(renderer?.playbackEndSeconds).toBeCloseTo(3.5, 6);
       expect(parseAnsiPixels(renderer?.getAnsiLines(2.1) ?? [])[10]?.[20]).toEqual({ r: 0, g: 255, b: 0 });
     } finally {
