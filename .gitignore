@@ -14,6 +14,7 @@ node_modules/
 packages/*/node_modules/
 packages/*/dist/
 packages/*/dist-sea/
+packages/*/dist-bun/
 *.tsbuildinfo
 coverage/
 

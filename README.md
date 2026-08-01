@@ -13,7 +13,7 @@ BMS/BMSON toolchain composed of TypeScript + pnpm workspaces.
 - `@be-music/stringifier`: Stringization from JSON to `.bms` / `.bmson`
 - `@be-music/audio-renderer`: Render the music score and output `.wav` / `.aiff`
 - `@be-music/player`: Shared playback engine, timing, judgment, scoring, gauge, BGA timeline, and UI/audio adapter contracts
-- `@be-music/player-tui`: Terminal UI and `bms-player` CLI frontend for autoplay, keyboard play, Music Select, BGA, and SEA builds
+- `@be-music/player-tui`: Terminal UI and `bms-player` CLI frontend for autoplay, keyboard play, Music Select, BGA, and standalone executable builds
 - `@be-music/lr2-skin`: Renderer-independent Lunatic Rave 2 skin parser, asset resolver, and theme loader
 - `@be-music/beatoraja-skin`: Renderer-independent beatoraja JSON/Lua skin parser, normalizer, and theme loader
 - `@be-music/player-web`: Browser PixiJS player core for song selection, built-in default / LR2 / beatoraja skin rendering, gameplay, result scenes, and recording
@@ -380,7 +380,9 @@ Storage location and usage:
   - Structured log when running `player`
   - If `--log-file <path>` is specified, use that path
 
-## SEA (Single Executable Applications)
+## Standalone Executables
+
+### Node SEA
 
 ```bash
 # Build the player SEA binary
@@ -402,6 +404,33 @@ supplement:
 
 - Requires Node.js 25.5+.
 - SEA generation uses built-in `--build-sea`.
+
+### Bun macOS
+
+The Bun build is an additional player-only path; it does not replace the Node SEA builds above.
+
+```bash
+# Build a broadly compatible Intel macOS executable (default: x64 baseline)
+pnpm run player:bun
+
+# Build a native Apple Silicon executable
+pnpm run player:bun:arm64
+
+# Build for newer Intel CPUs, or select the output path
+pnpm run player:bun --target bun-darwin-x64
+pnpm run player:bun --output /path/to/be-music-player
+
+# Build outputs
+./packages/player-tui/dist-bun/be-music-player chart.bms
+./packages/player-tui/dist-bun/be-music-player-arm64 chart.bms
+```
+
+supplement:
+
+- Requires Bun in `PATH`.
+- The supported targets are `bun-darwin-x64-baseline` (default), `bun-darwin-x64`, and `bun-darwin-arm64`.
+- Each executable embeds the target-matching `node-web-audio-api` native addon, the non-threaded libav.js factory
+  and WASM, and the gameplay, UI, and video-BGA worker entrypoints.
 
 ## Exports Benchmark
 

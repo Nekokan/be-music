@@ -13,7 +13,7 @@ TypeScript + pnpm workspaces で構成した BMS/BMSON ツールチェーンで�
 - `@be-music/stringifier`: JSON から `.bms` / `.bmson` への文字列化
 - `@be-music/audio-renderer`: 譜面をレンダリングして `.wav` / `.aiff` を出力
 - `@be-music/player`: 再生 engine、timing、判定、score、gauge、BGA timeline、UI/audio adapter 契約を共有する core package
-- `@be-music/player-tui`: autoplay、keyboard play、Music Select、BGA、SEA build を扱う terminal UI と `bms-player` CLI frontend
+- `@be-music/player-tui`: autoplay、keyboard play、Music Select、BGA、単体実行ファイル build を扱う terminal UI と `bms-player` CLI frontend
 - `@be-music/lr2-skin`: Lunatic Rave 2 skin parser、asset resolver、theme loader を renderer 非依存で提供する package
 - `@be-music/beatoraja-skin`: beatoraja JSON/Lua skin parser、normalizer、theme loader を renderer 非依存で提供する package
 - `@be-music/player-web`: 選曲、built-in default / LR2 / beatoraja skin 描画、gameplay、result scene、録画を扱う browser PixiJS player core
@@ -380,7 +380,9 @@ pnpm run editor export chart.json chart.bms
   - `player` 実行時の構造化ログ
   - `--log-file <path>` を指定した場合はその path を使います
 
-## SEA (Single Executable Applications)
+## 単体実行ファイル
+
+### Node SEA
 
 ```bash
 # player の SEA バイナリを生成
@@ -402,6 +404,33 @@ pnpm run audio-renderer:sea --node-binary /path/to/node
 
 - Node.js 25.5+ が必要です。
 - SEA 生成は built-in の `--build-sea` を使用します。
+
+### Bun macOS
+
+Bun build は player 専用の追加経路です。上記の Node SEA build は置き換えず、そのまま利用できます。
+
+```bash
+# 幅広い Intel Mac と互換性がある実行ファイルを生成（既定: x64 baseline）
+pnpm run player:bun
+
+# Apple Silicon native 実行ファイルを生成
+pnpm run player:bun:arm64
+
+# 新しい Intel CPU 向け target または出力先を指定
+pnpm run player:bun --target bun-darwin-x64
+pnpm run player:bun --output /path/to/be-music-player
+
+# 生成物
+./packages/player-tui/dist-bun/be-music-player chart.bms
+./packages/player-tui/dist-bun/be-music-player-arm64 chart.bms
+```
+
+補足:
+
+- `PATH` 上に Bun が必要です。
+- 対応 target は `bun-darwin-x64-baseline`（既定）、`bun-darwin-x64`、`bun-darwin-arm64` です。
+- 各実行ファイルには target と同じ architecture の `node-web-audio-api` native addon、non-threaded
+  libav.js factory と WASM、gameplay、UI、video-BGA の worker entrypoint を埋め込みます。
 
 ## Exports ベンチマーク
 

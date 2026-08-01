@@ -25,6 +25,8 @@
     "player:diag:keyboard": "pnpm --filter @be-music/player-tui run diag:keyboard",
     "player:diag:gameplay-input": "pnpm --filter @be-music/player-tui run diag:gameplay-input",
     "player:sea": "pnpm --filter @be-music/player-tui run build:sea",
+    "player:bun": "pnpm --filter @be-music/player-tui run build:bun",
+    "player:bun:arm64": "pnpm --filter @be-music/player-tui run build:bun:arm64",
     "audio-renderer:sea": "pnpm --filter @be-music/audio-renderer run build:sea",
     "editor": "pnpm --filter @be-music/editor run dev",
     "audio-render": "pnpm --filter @be-music/audio-renderer run dev",

@@ -49,6 +49,7 @@ jobs:
               - 'packages/json/**'
               - 'packages/utils/**'
               - 'scripts/build-sea.ts'
+              - 'scripts/build-bun-player.ts'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - '.node-version'
@@ -669,9 +670,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
 
+      - name: Setup Bun
+        if: needs.changes.outputs.sea_player_changed == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
       - name: Verify player SEA bundle
         if: needs.changes.outputs.sea_player_changed == 'true'
         run: pnpm exec tsx scripts/build-sea.ts --package player --bundle-only
+
+      - name: Verify player Bun macOS x64 executable
+        if: needs.changes.outputs.sea_player_changed == 'true'
+        run: pnpm run player:bun
+
+      - name: Verify player Bun macOS arm64 executable
+        if: needs.changes.outputs.sea_player_changed == 'true'
+        run: pnpm run player:bun:arm64
 
       - name: Verify audio-renderer SEA bundle
         if: needs.changes.outputs.sea_audio_renderer_changed == 'true'
