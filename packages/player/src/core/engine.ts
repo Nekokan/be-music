@@ -467,6 +467,7 @@ interface PendingAutoLongNoteState {
 
 const AUTO_AUDIO_CHUNK_FRAMES = 256;
 const MANUAL_AUDIO_CHUNK_FRAMES = 256;
+const BUN_AUDIO_CHUNK_FRAMES = 1_024;
 const MANUAL_AUDIO_TARGET_LEAD_MS = 10;
 const AUTO_AUDIO_TARGET_LEAD_MS = MANUAL_AUDIO_TARGET_LEAD_MS;
 const TUI_FRAME_INTERVAL_MS = 1000 / 60;
@@ -3830,7 +3831,12 @@ async function createAudioSessionIfEnabled(
   const background = createSilentRenderResult(runtimeSampleRate);
 
   const sampleRate = toPlaybackSampleRate(background.sampleRate, options.speed ?? 1);
-  const samplesPerFrame = mode === 'manual' ? MANUAL_AUDIO_CHUNK_FRAMES : AUTO_AUDIO_CHUNK_FRAMES;
+  const samplesPerFrame =
+    'Bun' in globalThis
+      ? BUN_AUDIO_CHUNK_FRAMES
+      : mode === 'manual'
+        ? MANUAL_AUDIO_CHUNK_FRAMES
+        : AUTO_AUDIO_CHUNK_FRAMES;
   const leadTuning = createAudioLeadTuning(options, mode);
   const outputDynamics = createOutputDynamicsConfig(options, sampleRate);
   const output = await createNodeAudioSink({
@@ -3982,7 +3988,7 @@ async function createAudioSessionIfEnabled(
         shouldStop: () => abortRequested,
         isDraining: () => draining,
         isPaused: () => paused,
-        mode,
+        chunkFrames: samplesPerFrame,
         leadTuning,
         outputDynamics,
         playbackSampleRate: sampleRate,
@@ -4300,15 +4306,22 @@ async function playMixedPcmThroughOutput(params: {
   shouldStop: () => boolean;
   isDraining: () => boolean;
   isPaused: () => boolean;
-  mode: 'auto' | 'manual';
+  chunkFrames: number;
   leadTuning: AudioLeadTuning;
   outputDynamics?: OutputDynamicsConfig;
   playbackSampleRate: number;
 }): Promise<void> {
-  const { output, background, activeVoices, shouldStop, isDraining, isPaused, mode, leadTuning, playbackSampleRate } =
-    params;
-
-  const chunkFrames = mode === 'manual' ? MANUAL_AUDIO_CHUNK_FRAMES : AUTO_AUDIO_CHUNK_FRAMES;
+  const {
+    output,
+    background,
+    activeVoices,
+    shouldStop,
+    isDraining,
+    isPaused,
+    chunkFrames,
+    leadTuning,
+    playbackSampleRate,
+  } = params;
   // Keep one reusable PCM buffer and fill through Int16Array to minimize per-sample write overhead.
   const chunkSamples = new Int16Array(chunkFrames * 2);
   const chunk = new Uint8Array(chunkSamples.buffer);
@@ -4376,12 +4389,10 @@ async function playMixedPcmThroughOutput(params: {
       }
     }
 
-    for (let frame = 0; frame < chunkFrames; frame += 1) {
-      const sampleOffset = frame * 2;
-      let leftSample = mixedLeft[frame];
-      let rightSample = mixedRight[frame];
-
-      if (outputDynamics) {
+    if (outputDynamics) {
+      for (let frame = 0; frame < chunkFrames; frame += 1) {
+        let leftSample = mixedLeft[frame];
+        let rightSample = mixedRight[frame];
         const level = Math.max(Math.abs(leftSample), Math.abs(rightSample));
         if (outputDynamics.compressorEnabled) {
           const desiredCompressorGain =
@@ -4418,16 +4429,24 @@ async function playMixedPcmThroughOutput(params: {
         } else {
           limiterGain = 1;
         }
+        mixedLeft[frame] = leftSample;
+        mixedRight[frame] = rightSample;
       }
+    }
 
-      chunkSamples[sampleOffset] = floatToInt16(leftSample);
-      chunkSamples[sampleOffset + 1] = floatToInt16(rightSample);
+    const writesFloat32 = typeof output.writeFloat32 === 'function';
+    if (!writesFloat32) {
+      for (let frame = 0; frame < chunkFrames; frame += 1) {
+        const sampleOffset = frame * 2;
+        chunkSamples[sampleOffset] = floatToInt16(mixedLeft[frame]);
+        chunkSamples[sampleOffset + 1] = floatToInt16(mixedRight[frame]);
+      }
     }
 
     advanceAndPruneActiveVoices(activeVoices, chunkFrames);
     playhead += chunkFrames;
 
-    const writable = output.write(chunk);
+    const writable = writesFloat32 ? output.writeFloat32!(mixedLeft, mixedRight, chunkFrames) : output.write(chunk);
     if (!writable) {
       await output.waitWritable(shouldStop);
     }
@@ -4999,7 +5018,7 @@ function resolveJudgeNowMsFromPressedAt(drainNowMs: number, pressedAt: number | 
 const PRESSED_AT_MAX_DELTA_MS = 50;
 
 /**
- * Precise sleep that cuts the wait short on the next input arrival
+ * Cancellable sleep that cuts the wait short on the next input arrival
  * (`inputSignals.pushCommand`). Returns `'timeout'` when the full delay elapsed and `'input'` when an input
  * woke us up early. The caller decides what to do on `'input'` — typically re-drain the input queue and
  * continue waiting for the rest of the original tick.
@@ -5025,14 +5044,11 @@ async function waitPreciseOrInput(
     if (remaining <= 0) {
       return 'timeout';
     }
-    if (remaining > 8) {
-      const winner = await wakeUp.waitForInputOrTimeout(remaining - 4);
-      if (winner === 'input') {
-        return 'input';
-      }
-      continue;
-    }
-    const winner = await wakeUp.waitForInputOrTimeout(0);
+    // Keep the timer cancellable by input all the way to the tick boundary. The old final 4 ms
+    // setImmediate loop improved timer precision but kept roughly a quarter of a CPU core busy at 60 Hz.
+    // Input commands already carry their OS-arrival timestamp, so timer jitter cannot bias judgement, and
+    // an arriving command still wakes this wait immediately for responsive keysound and visual feedback.
+    const winner = await wakeUp.waitForInputOrTimeout(remaining);
     if (winner === 'input') {
       return 'input';
     }

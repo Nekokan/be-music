@@ -11,15 +11,17 @@ const audioSinkState = vi.hoisted(() => ({
   pausedDurationMs: 0,
   paused: false,
   scheduledSeconds: 0,
+  samplesPerFrame: 0,
 }));
 
 vi.mock('./audio-sink.ts', () => ({
-  createNodeAudioSink: vi.fn(async (options: { sampleRate: number; channels: number }) => {
+  createNodeAudioSink: vi.fn(async (options: { sampleRate: number; channels: number; samplesPerFrame: number }) => {
     audioSinkState.startMs = performance.now();
     audioSinkState.pausedAtMs = 0;
     audioSinkState.pausedDurationMs = 0;
     audioSinkState.paused = false;
     audioSinkState.scheduledSeconds = 0;
+    audioSinkState.samplesPerFrame = options.samplesPerFrame;
 
     const resolveOutputSeconds = (): number => {
       const referenceMs = audioSinkState.paused ? audioSinkState.pausedAtMs : performance.now();
@@ -690,6 +692,39 @@ describe('player', () => {
       }
       if (queueMicrotaskDescriptor) {
         Object.defineProperty(globalThis, 'queueMicrotask', queueMicrotaskDescriptor);
+      }
+    }
+  });
+
+  test('player: tick scheduling does not tail-spin through setImmediate during manual play', async () => {
+    const json = createEmptyJson('bms');
+    json.metadata.bpm = 120;
+    json.events = [{ measure: 0, channel: '11', position: [0, 1], value: '01' }];
+
+    const setImmediateDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'setImmediate');
+    const originalSetImmediate = globalThis.setImmediate.bind(globalThis);
+    const setImmediateSpy = vi.fn((callback: (...args: unknown[]) => void, ...args: unknown[]) =>
+      originalSetImmediate(callback, ...args),
+    );
+    Object.defineProperty(globalThis, 'setImmediate', {
+      configurable: true,
+      writable: true,
+      value: setImmediateSpy,
+    });
+    try {
+      await manualPlay(json, {
+        speed: 1000,
+        leadInMs: 0,
+        audio: false,
+        tui: false,
+        writeOutput: () => undefined,
+      });
+      expect(setImmediateSpy).not.toHaveBeenCalled();
+    } finally {
+      if (setImmediateDescriptor) {
+        Object.defineProperty(globalThis, 'setImmediate', setImmediateDescriptor);
+      } else {
+        delete (globalThis as { setImmediate?: unknown }).setImmediate;
       }
     }
   });
@@ -1474,6 +1509,30 @@ describe('player', () => {
 
     expect(factoryCalls).toBe(1);
     expect(audioSinkState.writes.length).toBeGreaterThan(0);
+  });
+
+  test('player: Bun mixes 1024-frame chunks to reduce scheduled audio node creation', async () => {
+    vi.stubGlobal('Bun', {});
+    try {
+      const json = createEmptyJson('bms');
+      json.metadata.bpm = 120;
+      json.events = [{ measure: 0, channel: '11', position: [0, 1] as const, value: '01' }];
+
+      audioSinkState.writes.length = 0;
+      await autoPlay(json, {
+        auto: true,
+        speed: 240,
+        leadInMs: 0,
+        audio: true,
+        tui: false,
+        writeOutput: () => undefined,
+      });
+
+      expect(audioSinkState.samplesPerFrame).toBe(1_024);
+      expect(audioSinkState.writes.some((chunk) => chunk.byteLength === 1_024 * 2 * 2)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test('player: manual landmine hit sounds #WAV00 when audio is enabled', async () => {

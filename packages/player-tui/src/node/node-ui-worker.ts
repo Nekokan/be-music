@@ -336,6 +336,11 @@ async function bootstrap(): Promise<void> {
       frameState.invalidateFrame();
       return true;
     }
+    if (message.kind === 'request-full-refresh') {
+      tui.requestFullRefresh();
+      deferredUiFlush.markFrameDirty();
+      return true;
+    }
     return false;
   };
 

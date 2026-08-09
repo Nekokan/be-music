@@ -33,6 +33,7 @@ const uiRuntimeState = vi.hoisted(() => ({
   dispose: vi.fn(async () => undefined),
   triggerPoor: vi.fn(),
   clearPoor: vi.fn(),
+  requestFullRefresh: vi.fn(),
   tuiEnabled: true,
   playbackEndSeconds: undefined as number | undefined,
 }));
@@ -81,6 +82,7 @@ vi.mock('./node-ui-runtime.ts', () => ({
       dispose: uiRuntimeState.dispose,
       triggerPoor: uiRuntimeState.triggerPoor,
       clearPoor: uiRuntimeState.clearPoor,
+      requestFullRefresh: uiRuntimeState.requestFullRefresh,
       createBridgePort: () => {
         if (!uiRuntimeState.bridgePort) {
           throw new Error('bridge port missing');
@@ -111,11 +113,40 @@ afterEach(() => {
   uiRuntimeState.dispose.mockReset();
   uiRuntimeState.triggerPoor.mockReset();
   uiRuntimeState.clearPoor.mockReset();
+  uiRuntimeState.requestFullRefresh.mockReset();
   uiRuntimeState.tuiEnabled = true;
   uiRuntimeState.playbackEndSeconds = undefined;
 });
 
 describe('node gameplay runtime', () => {
+  test('requests a complete UI repaint after the caller clears the loading screen', async () => {
+    const events: string[] = [];
+    const onLoadComplete = vi.fn(() => {
+      events.push('loading-cleared');
+    });
+    uiRuntimeState.requestFullRefresh.mockImplementation(() => {
+      events.push('refresh-requested');
+    });
+    const promise = runNodeGameplayRuntime(createOptions({ onLoadComplete }));
+    const worker = getLastWorker();
+
+    worker.emit('message', {
+      kind: 'ui-init',
+      requestId: 2,
+      runtime: createUiInit(),
+    });
+    await Promise.resolve();
+
+    worker.emit('message', { kind: 'load-complete' });
+
+    expect(onLoadComplete).toHaveBeenCalledOnce();
+    expect(uiRuntimeState.requestFullRefresh).toHaveBeenCalledOnce();
+    expect(events).toEqual(['loading-cleared', 'refresh-requested']);
+
+    worker.emit('message', { kind: 'result', summary: createSummary() });
+    await promise;
+  });
+
   test('passes source resolution condition to the gameplay worker in source runs', async () => {
     const promise = runNodeGameplayRuntime(createOptions());
     const workerExecArgv = workerState.lastWorkerOptions?.execArgv;

@@ -410,25 +410,27 @@ pnpm run audio-renderer:sea --node-binary /path/to/node
 Bun build は player 専用の追加経路です。上記の Node SEA build は置き換えず、そのまま利用できます。
 
 ```bash
-# 幅広い Intel Mac と互換性がある実行ファイルを生成（既定: x64 baseline）
+# AVX2 対応 Intel Mac 向け実行ファイルを生成（既定）
 pnpm run player:bun
 
 # Apple Silicon native 実行ファイルを生成
 pnpm run player:bun:arm64
 
-# 新しい Intel CPU 向け target または出力先を指定
-pnpm run player:bun --target bun-darwin-x64
-pnpm run player:bun --output /path/to/be-music-player
+# AVX2 非対応の非公式 legacy Intel Mac 向け target または出力先を指定
+pnpm run player:bun --target bun-darwin-x64-baseline
+pnpm run player:bun --output /path/to/be-music-player-macos-x64
 
 # 生成物
-./packages/player-tui/dist-bun/be-music-player chart.bms
-./packages/player-tui/dist-bun/be-music-player-arm64 chart.bms
+./packages/player-tui/dist-bun/be-music-player-macos-x64 chart.bms
+./packages/player-tui/dist-bun/be-music-player-macos-arm64 chart.bms
 ```
 
 補足:
 
 - `PATH` 上に Bun が必要です。
-- 対応 target は `bun-darwin-x64-baseline`（既定）、`bun-darwin-x64`、`bun-darwin-arm64` です。
+- 対応 target は `bun-darwin-x64`（既定）、`bun-darwin-x64-baseline`、`bun-darwin-arm64` です。
+- 既定の x64 target は AVX2 を使用します。macOS 13 が公式対応する Intel Mac はすべて AVX2 対応です。
+  AVX2 を公開しない patched legacy 環境や仮想環境でのみ baseline target を使用してください。
 - 各実行ファイルには target と同じ architecture の `node-web-audio-api` native addon、non-threaded
   libav.js factory と WASM、gameplay、UI、video-BGA の worker entrypoint を埋め込みます。
 

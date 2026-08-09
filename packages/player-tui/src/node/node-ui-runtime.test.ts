@@ -191,6 +191,9 @@ describe('node ui runtime', () => {
     runtime.start();
     expect(messagesOfKind(worker, 'start')).toHaveLength(1);
 
+    runtime.requestFullRefresh();
+    expect(messagesOfKind(worker, 'request-full-refresh')).toHaveLength(1);
+
     stateSignals.setPaused(true);
     expect(messagesOfKind(worker, 'set-paused')).toHaveLength(1);
 

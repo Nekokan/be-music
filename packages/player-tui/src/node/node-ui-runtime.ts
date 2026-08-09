@@ -53,6 +53,7 @@ export interface NodeUiRuntime {
   dispose: () => Promise<void>;
   triggerPoor: (seconds: number) => void;
   clearPoor: () => void;
+  requestFullRefresh: () => void;
   createBridgePort: () => MessagePort;
 }
 
@@ -73,6 +74,7 @@ export async function createNodeUiRuntime(options: NodeUiRuntimeOptions): Promis
       dispose: () => Promise.resolve(),
       triggerPoor: () => undefined,
       clearPoor: () => undefined,
+      requestFullRefresh: () => undefined,
       createBridgePort: () => {
         throw new Error('TUI bridge port is unavailable');
       },
@@ -208,6 +210,9 @@ export async function createNodeUiRuntime(options: NodeUiRuntimeOptions): Promis
     },
     clearPoor: () => {
       postWorkerMessage({ kind: 'clear-poor' });
+    },
+    requestFullRefresh: () => {
+      postWorkerMessage({ kind: 'request-full-refresh' });
     },
     createBridgePort: () => {
       if (disposed) {

@@ -449,6 +449,10 @@ describe('player-tui', () => {
       expect(secondRender).toContain('i=1338');
       expect(secondRender).toContain('a=T');
       expect(secondRender).toContain('a=d,d=I,i=1337');
+      expect(secondRender.indexOf('a=T')).toBeLessThan(secondRender.lastIndexOf('\u001b[H'));
+      expect(secondRender.indexOf('a=d,d=I,i=1337')).toBeLessThan(secondRender.lastIndexOf('\u001b[H'));
+      expect(secondRender.slice(secondRender.lastIndexOf('\u001b[H'))).toContain('test');
+      expect(secondRender.slice(secondRender.lastIndexOf('\u001b[H'))).toContain('\n');
     } finally {
       process.stdout.write = originalWrite;
     }
@@ -506,6 +510,52 @@ describe('player-tui', () => {
       expect(secondRender).toMatch(/\u001b\[\d+;1H/);
       expect(secondRender).not.toContain('\n');
       expect(secondRender.length).toBeLessThan(firstRender.length);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+  });
+
+  test('repaints the complete frame when an external terminal write invalidates the screen', () => {
+    const chunks: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      const tui = new PlayerTui({
+        mode: 'AUTO',
+        laneDisplayMode: '5 KEY SP',
+        title: 'startup repaint test',
+        lanes: [{ channel: '11', key: 'z' }],
+        speed: 1,
+        highSpeed: 1,
+        judgeWindowMs: 100,
+        stdoutIsTTY: true,
+        stdinIsTTY: true,
+      });
+      tui.setTerminalSize(40, 24);
+      tui.start();
+      const frame = {
+        currentBeat: 0,
+        currentSeconds: 0,
+        totalSeconds: 10,
+        summary: createSummary(),
+        notes: [],
+      };
+      chunks.length = 0;
+      tui.render(frame);
+      chunks.length = 0;
+
+      tui.requestFullRefresh();
+      tui.render(frame);
+      const repaint = chunks.join('');
+      tui.stop();
+
+      expect(repaint).toContain('\u001b[2J\u001b[H');
+      expect(repaint).toContain('startup repaint test');
+      expect(repaint).toContain('\n');
     } finally {
       process.stdout.write = originalWrite;
     }

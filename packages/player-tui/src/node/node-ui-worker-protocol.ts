@@ -45,6 +45,7 @@ export type NodeUiWorkerInboundMessage =
   | { kind: 'set-judge-combo'; state: PlayerJudgeComboSignalState }
   | { kind: 'trigger-poor'; seconds: number }
   | { kind: 'clear-poor' }
+  | { kind: 'request-full-refresh' }
   | { kind: 'resize'; columns?: number; rows?: number };
 
 export type NodeUiWorkerOutboundMessage =

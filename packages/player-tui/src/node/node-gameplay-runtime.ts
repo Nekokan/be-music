@@ -87,6 +87,10 @@ export async function runNodeGameplayRuntime(options: NodeGameplayRuntimeOptions
       }
       if (message.kind === 'load-complete') {
         options.onLoadComplete?.();
+        // Loading and gameplay rendering use separate worker message channels. The gameplay UI can therefore
+        // finish its first frame before the caller clears the loading screen, leaving its row-diff cache out of
+        // sync with the terminal. Repaint the complete frame after that external screen mutation.
+        uiRuntime?.requestFullRefresh();
         return;
       }
       if (message.kind === 'log') {

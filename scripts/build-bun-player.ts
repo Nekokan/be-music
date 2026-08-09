@@ -70,7 +70,7 @@ function printUsage(): void {
       '',
       'Options:',
       '  -o, --output <path>       Output executable path',
-      '      --target <target>     bun-darwin-x64-baseline (default), bun-darwin-x64, or bun-darwin-arm64',
+      '      --target <target>     bun-darwin-x64 (default), bun-darwin-x64-baseline, or bun-darwin-arm64',
       '  -h, --help                Show this help',
     ].join('\n') + '\n',
   );
@@ -78,7 +78,7 @@ function printUsage(): void {
 
 function parseArgs(argv: string[]): CliArgs {
   let output: string | undefined;
-  let target: BunPlayerTarget = 'bun-darwin-x64-baseline';
+  let target: BunPlayerTarget = 'bun-darwin-x64';
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -282,7 +282,8 @@ async function main(): Promise<void> {
   }
 
   const args = parseArgs(process.argv.slice(2));
-  const defaultOutputName = args.target === 'bun-darwin-arm64' ? 'be-music-player-arm64' : 'be-music-player';
+  const defaultOutputName =
+    args.target === 'bun-darwin-arm64' ? 'be-music-player-macos-arm64' : 'be-music-player-macos-x64';
   const outputPath = args.output ? toAbsolutePath(args.output) : resolve(playerTuiDir, 'dist-bun', defaultOutputName);
   await mkdir(dirname(outputPath), { recursive: true });
 

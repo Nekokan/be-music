@@ -542,6 +542,10 @@ export class PlayerTui {
     this.needsFullRefresh = true;
   }
 
+  requestFullRefresh(): void {
+    this.needsFullRefresh = true;
+  }
+
   render(frame: TuiFrame): void {
     if (!this.active) {
       return;
@@ -1015,11 +1019,16 @@ export class PlayerTui {
       this.activeKittyBgaImageIndex = 0;
       this.kittyBgaVisible = false;
     }
+    // Some Kitty versions invalidate the text cells touched by an image placement deletion. Animated BGA updates
+    // replace and delete an image after nearly every frame, so writing the text diff first can leave unchanged rows
+    // black until those rows happen to change again. Apply the graphics commands first and then repaint the complete
+    // text frame whenever the Kitty overlay changes. Non-graphics frames retain the normal row-diff path.
+    const kittyOverlayChanged = overlaySequence.length > 0;
     const frameSequence = this.buildFrameWriteSequence(paddedLines, {
       clearBeforeWrite: needsFullRefresh,
-      writeFullFrame: needsFullFrameWrite,
+      writeFullFrame: needsFullFrameWrite || kittyOverlayChanged,
     });
-    const output = `${frameSequence}${overlaySequence}`;
+    const output = `${overlaySequence}${frameSequence}`;
     if (output.length > 0) {
       process.stdout.write(output);
     }

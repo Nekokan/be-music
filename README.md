@@ -410,25 +410,27 @@ supplement:
 The Bun build is an additional player-only path; it does not replace the Node SEA builds above.
 
 ```bash
-# Build a broadly compatible Intel macOS executable (default: x64 baseline)
+# Build an AVX2-capable Intel macOS executable (default)
 pnpm run player:bun
 
 # Build a native Apple Silicon executable
 pnpm run player:bun:arm64
 
-# Build for newer Intel CPUs, or select the output path
-pnpm run player:bun --target bun-darwin-x64
-pnpm run player:bun --output /path/to/be-music-player
+# Build for unofficial legacy Intel Macs without AVX2, or select the output path
+pnpm run player:bun --target bun-darwin-x64-baseline
+pnpm run player:bun --output /path/to/be-music-player-macos-x64
 
 # Build outputs
-./packages/player-tui/dist-bun/be-music-player chart.bms
-./packages/player-tui/dist-bun/be-music-player-arm64 chart.bms
+./packages/player-tui/dist-bun/be-music-player-macos-x64 chart.bms
+./packages/player-tui/dist-bun/be-music-player-macos-arm64 chart.bms
 ```
 
 supplement:
 
 - Requires Bun in `PATH`.
-- The supported targets are `bun-darwin-x64-baseline` (default), `bun-darwin-x64`, and `bun-darwin-arm64`.
+- The supported targets are `bun-darwin-x64` (default), `bun-darwin-x64-baseline`, and `bun-darwin-arm64`.
+- The default x64 target uses AVX2. All Intel Macs officially supported by macOS 13 provide AVX2; use the baseline
+  target only for patched legacy installations or virtual machines that do not expose AVX2.
 - Each executable embeds the target-matching `node-web-audio-api` native addon, the non-threaded libav.js factory
   and WASM, and the gameplay, UI, and video-BGA worker entrypoints.
 
