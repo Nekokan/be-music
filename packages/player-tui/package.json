@@ -25,6 +25,7 @@
     "build:sea": "tsx ../../scripts/build-sea.ts --package player",
     "build:bun": "bun ../../scripts/build-bun-player.ts",
     "build:bun:arm64": "bun ../../scripts/build-bun-player.ts --target bun-darwin-arm64",
+    "build:bun:universal": "bun ../../scripts/build-bun-player.ts --target bun-darwin-universal",
     "clean": "rimraf dist dist-bun tsconfig.tsbuildinfo",
     "dev": "tsx --tsconfig ../../tsconfig.typecheck.json src/cli.ts",
     "diag:keyboard": "tsx --tsconfig ../../tsconfig.typecheck.json src/keyboard-diagnostic.ts",

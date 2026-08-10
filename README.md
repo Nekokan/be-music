@@ -416,6 +416,9 @@ pnpm run player:bun
 # Build a native Apple Silicon executable
 pnpm run player:bun:arm64
 
+# Build one executable for both Intel and Apple Silicon Macs
+pnpm run player:bun:universal
+
 # Build for unofficial legacy Intel Macs without AVX2, or select the output path
 pnpm run player:bun --target bun-darwin-x64-baseline
 pnpm run player:bun --output /path/to/be-music-player-macos-x64
@@ -423,12 +426,15 @@ pnpm run player:bun --output /path/to/be-music-player-macos-x64
 # Build outputs
 ./packages/player-tui/dist-bun/be-music-player-macos-x64 chart.bms
 ./packages/player-tui/dist-bun/be-music-player-macos-arm64 chart.bms
+./packages/player-tui/dist-bun/be-music-player-macos-universal chart.bms
 ```
 
 supplement:
 
 - Requires Bun in `PATH`.
-- The supported targets are `bun-darwin-x64` (default), `bun-darwin-x64-baseline`, and `bun-darwin-arm64`.
+- The supported targets are `bun-darwin-x64` (default), `bun-darwin-x64-baseline`, `bun-darwin-arm64`, and
+  `bun-darwin-universal`. The universal build combines the AVX2 x64 and arm64 executables with `lipo` and then
+  ad-hoc signs the combined executable.
 - The default x64 target uses AVX2. All Intel Macs officially supported by macOS 13 provide AVX2; use the baseline
   target only for patched legacy installations or virtual machines that do not expose AVX2.
 - Each executable embeds the target-matching `node-web-audio-api` native addon, the non-threaded libav.js factory

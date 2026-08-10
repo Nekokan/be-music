@@ -1,13 +1,16 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const SUPPORTED_TARGETS = ['bun-darwin-arm64', 'bun-darwin-x64', 'bun-darwin-x64-baseline'] as const;
+const BUN_COMPILE_TARGETS = ['bun-darwin-arm64', 'bun-darwin-x64', 'bun-darwin-x64-baseline'] as const;
+type BunCompileTarget = (typeof BUN_COMPILE_TARGETS)[number];
+const SUPPORTED_TARGETS = [...BUN_COMPILE_TARGETS, 'bun-darwin-universal'] as const;
 type BunPlayerTarget = (typeof SUPPORTED_TARGETS)[number];
 
 interface CliArgs {
@@ -19,7 +22,7 @@ interface BunBuildConfig {
   entrypoints: string[];
   conditions: string[];
   compile: {
-    target: BunPlayerTarget;
+    target: BunCompileTarget;
     outfile: string;
     autoloadDotenv: boolean;
     autoloadBunfig: boolean;
@@ -70,7 +73,7 @@ function printUsage(): void {
       '',
       'Options:',
       '  -o, --output <path>       Output executable path',
-      '      --target <target>     bun-darwin-x64 (default), bun-darwin-x64-baseline, or bun-darwin-arm64',
+      '      --target <target>     bun-darwin-x64 (default), bun-darwin-x64-baseline, bun-darwin-arm64, or bun-darwin-universal',
       '  -h, --help                Show this help',
     ].join('\n') + '\n',
   );
@@ -141,7 +144,7 @@ async function resolvePackageDir(name: string, fromDir: string): Promise<string>
   }
 }
 
-async function createBunPlayerPlugin(target: BunPlayerTarget): Promise<BunBuildPlugin> {
+async function createBunPlayerPlugin(target: BunCompileTarget): Promise<BunBuildPlugin> {
   const targetArch = target === 'bun-darwin-arm64' ? 'arm64' : 'x64';
   const audioPackageDir = await resolvePackageDir('node-web-audio-api', playerDir);
   const audioAddonPath = resolve(audioPackageDir, `node-web-audio-api.darwin-${targetArch}.node`);
@@ -275,19 +278,8 @@ async function maybeAdhocSignMacBinary(outputPath: string): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  const bun = (globalThis as typeof globalThis & { Bun?: BunRuntime }).Bun;
-  if (!bun) {
-    throw new Error('This build script must be run with Bun.');
-  }
-
-  const args = parseArgs(process.argv.slice(2));
-  const defaultOutputName =
-    args.target === 'bun-darwin-arm64' ? 'be-music-player-macos-arm64' : 'be-music-player-macos-x64';
-  const outputPath = args.output ? toAbsolutePath(args.output) : resolve(playerTuiDir, 'dist-bun', defaultOutputName);
-  await mkdir(dirname(outputPath), { recursive: true });
-
-  process.stdout.write(`Building Bun player executable (${args.target})...\n`);
+async function buildBunPlayerExecutable(bun: BunRuntime, target: BunCompileTarget, outputPath: string): Promise<void> {
+  process.stdout.write(`Building Bun player executable (${target})...\n`);
   const result = await bun.build({
     entrypoints: [
       resolve(playerTuiDir, 'src/cli/runner.ts'),
@@ -297,14 +289,14 @@ async function main(): Promise<void> {
     ],
     conditions: ['source'],
     compile: {
-      target: args.target,
+      target,
       outfile: outputPath,
       autoloadDotenv: false,
       autoloadBunfig: false,
       autoloadTsconfig: false,
       autoloadPackageJson: false,
     },
-    plugins: [await createBunPlayerPlugin(args.target)],
+    plugins: [await createBunPlayerPlugin(target)],
     naming: {
       entry: '[name].[ext]',
     },
@@ -319,7 +311,44 @@ async function main(): Promise<void> {
     for (const log of result.logs) {
       process.stderr.write(`${String(log)}\n`);
     }
-    throw new Error('Bun player build failed.');
+    throw new Error(`Bun player build failed for ${target}.`);
+  }
+}
+
+async function buildUniversalBunPlayer(bun: BunRuntime, outputPath: string): Promise<void> {
+  const temporaryDir = await mkdtemp(join(tmpdir(), 'be-music-player-macos-universal-'));
+  const x64Path = resolve(temporaryDir, 'be-music-player-macos-x64');
+  const arm64Path = resolve(temporaryDir, 'be-music-player-macos-arm64');
+  try {
+    await buildBunPlayerExecutable(bun, 'bun-darwin-x64', x64Path);
+    await buildBunPlayerExecutable(bun, 'bun-darwin-arm64', arm64Path);
+    process.stdout.write('Combining x64 and arm64 executables into a universal Mach-O...\n');
+    await execFileAsync('lipo', ['-create', '-output', outputPath, x64Path, arm64Path]);
+  } finally {
+    await rm(temporaryDir, { recursive: true, force: true });
+  }
+}
+
+async function main(): Promise<void> {
+  const bun = (globalThis as typeof globalThis & { Bun?: BunRuntime }).Bun;
+  if (!bun) {
+    throw new Error('This build script must be run with Bun.');
+  }
+
+  const args = parseArgs(process.argv.slice(2));
+  const defaultOutputName =
+    args.target === 'bun-darwin-universal'
+      ? 'be-music-player-macos-universal'
+      : args.target === 'bun-darwin-arm64'
+        ? 'be-music-player-macos-arm64'
+        : 'be-music-player-macos-x64';
+  const outputPath = args.output ? toAbsolutePath(args.output) : resolve(playerTuiDir, 'dist-bun', defaultOutputName);
+  await mkdir(dirname(outputPath), { recursive: true });
+
+  if (args.target === 'bun-darwin-universal') {
+    await buildUniversalBunPlayer(bun, outputPath);
+  } else {
+    await buildBunPlayerExecutable(bun, args.target, outputPath);
   }
   await maybeAdhocSignMacBinary(outputPath);
   process.stdout.write(`Bun player executable generated: ${outputPath}\n`);

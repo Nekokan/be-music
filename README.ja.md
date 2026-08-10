@@ -416,6 +416,9 @@ pnpm run player:bun
 # Apple Silicon native 実行ファイルを生成
 pnpm run player:bun:arm64
 
+# Intel Mac・Apple Silicon Macの両方で動作する実行ファイルを生成
+pnpm run player:bun:universal
+
 # AVX2 非対応の非公式 legacy Intel Mac 向け target または出力先を指定
 pnpm run player:bun --target bun-darwin-x64-baseline
 pnpm run player:bun --output /path/to/be-music-player-macos-x64
@@ -423,12 +426,15 @@ pnpm run player:bun --output /path/to/be-music-player-macos-x64
 # 生成物
 ./packages/player-tui/dist-bun/be-music-player-macos-x64 chart.bms
 ./packages/player-tui/dist-bun/be-music-player-macos-arm64 chart.bms
+./packages/player-tui/dist-bun/be-music-player-macos-universal chart.bms
 ```
 
 補足:
 
 - `PATH` 上に Bun が必要です。
-- 対応 target は `bun-darwin-x64`（既定）、`bun-darwin-x64-baseline`、`bun-darwin-arm64` です。
+- 対応 target は `bun-darwin-x64`（既定）、`bun-darwin-x64-baseline`、`bun-darwin-arm64`、
+  `bun-darwin-universal` です。Universal buildはAVX2 x64版とarm64版を`lipo`で結合し、結合後の
+  実行ファイルをad-hoc署名します。
 - 既定の x64 target は AVX2 を使用します。macOS 13 が公式対応する Intel Mac はすべて AVX2 対応です。
   AVX2 を公開しない patched legacy 環境や仮想環境でのみ baseline target を使用してください。
 - 各実行ファイルには target と同じ architecture の `node-web-audio-api` native addon、non-threaded

@@ -27,6 +27,7 @@
     "player:sea": "pnpm --filter @be-music/player-tui run build:sea",
     "player:bun": "pnpm --filter @be-music/player-tui run build:bun",
     "player:bun:arm64": "pnpm --filter @be-music/player-tui run build:bun:arm64",
+    "player:bun:universal": "pnpm --filter @be-music/player-tui run build:bun:universal",
     "audio-renderer:sea": "pnpm --filter @be-music/audio-renderer run build:sea",
     "editor": "pnpm --filter @be-music/editor run dev",
     "audio-render": "pnpm --filter @be-music/audio-renderer run dev",
